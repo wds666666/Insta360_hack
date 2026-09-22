@@ -63,13 +63,13 @@ textarea {
 
 .page {
   min-height: 100vh;
-  padding: 28px 32px 48px;
+  padding: 16px 20px 32px;
 }
 
 .mast {
   display: grid;
-  grid-template-columns: 220px minmax(0, 40rem);
-  gap: 12px 32px;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px 20px;
   align-items: center;
 }
 
@@ -79,9 +79,9 @@ textarea {
 
 .logo img {
   display: block;
-  width: 220px;
-  height: auto;
-  border-radius: 20px;
+  width: auto;
+  height: 112px;
+  border-radius: 12px;
 }
 
 .lede,
@@ -90,22 +90,25 @@ textarea {
 }
 
 .lede {
-  max-width: 40rem;
-  font-size: 1.0625rem;
+  max-width: 46rem;
+  font-size: 1rem;
+  line-height: 1.45;
 }
 
 .slogan {
-  margin-top: 8px;
-  color: var(--quiet);
-  font-size: 1rem;
+  margin-top: 6px;
+  color: var(--ink);
+  font-size: 1.125rem;
+  font-weight: 600;
+  line-height: 1.4;
 }
 
 .layout {
   display: grid;
   grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
-  gap: 28px;
+  gap: 16px;
   align-items: start;
-  margin-top: 28px;
+  margin-top: 16px;
 }
 
 aside {
@@ -421,8 +424,8 @@ textarea:focus-visible {
 
 .task-list {
   display: grid;
-  gap: 8px;
-  max-height: 24rem;
+  gap: 4px;
+  max-height: 15.5rem;
   overflow: auto;
 }
 
@@ -506,16 +509,13 @@ textarea:focus-visible {
 }
 
 .task-id code {
-  display: grid;
+  display: block;
   min-width: 0;
+  overflow-x: auto;
   font-family: "IBM Plex Mono", ui-monospace, monospace;
   font-size: 0.75rem;
   font-weight: 500;
   line-height: 1.35;
-}
-
-.task-id code span {
-  overflow: hidden;
   white-space: nowrap;
 }
 
@@ -854,7 +854,7 @@ textarea:focus-visible {
 
 @media (max-width: 860px) {
   .page {
-    padding: 18px 16px 32px;
+    padding: 12px 16px 24px;
   }
 
   .mast,
