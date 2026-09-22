@@ -6,12 +6,13 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 
 type Props = {
   src: string | null;
+  stl: string | null;
   meter: string | null;
   flowing: boolean;
   onContinue: (() => void) | null;
 };
 
-export function GlbViewer({ src, meter, flowing, onContinue }: Props) {
+export function GlbViewer({ src, stl, meter, flowing, onContinue }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const [message, setMessage] = useState("");
 
@@ -132,8 +133,24 @@ export function GlbViewer({ src, meter, flowing, onContinue }: Props) {
   return (
     <section className="viewer" aria-label="三维模型">
       <header>
-        <h2>触觉模型</h2>
-        <p>视障者摸到的是同一份形状。拖动可以转动，滚轮可以拉近。</p>
+        <div className="viewer-title">
+          <h2>触觉模型</h2>
+          <p>视障者摸到的是同一份形状。拖动可以转动，滚轮可以拉近。</p>
+        </div>
+        {src || stl ? (
+          <div className="viewer-downloads">
+            {src ? (
+              <a href={src} download>
+                下载 GLB
+              </a>
+            ) : null}
+            {stl ? (
+              <a href={stl} download>
+                下载 STL
+              </a>
+            ) : null}
+          </div>
+        ) : null}
       </header>
       <div className={flowing ? "viewer-frame is-live" : "viewer-frame"}>
         <div className="viewer-bay" ref={host} />

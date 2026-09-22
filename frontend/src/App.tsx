@@ -225,6 +225,7 @@ export function App() {
           </div>
           <GlbViewer
             src={run?.outputs.model_glb ?? null}
+            stl={run?.outputs.model_stl ?? null}
             meter={meshMeter}
             flowing={meshRunning}
             onContinue={

@@ -49,6 +49,13 @@ export function TaskList({ tasks, selectedId, error, onSelect, onCreate }: Props
                   </span>
                 </span>
               </button>
+              <p className="task-id">
+                <span>编号</span>
+                <code>
+                  <span>{task.run_id.slice(0, 16)}</span>
+                  <span>{task.run_id.slice(16)}</span>
+                </code>
+              </p>
             </li>
           );
         })}
