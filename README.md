@@ -1,0 +1,70 @@
+# 触见
+
+把一张全景和一句空间说明，做成视障者可以触摸的空间地图。
+
+我们做了一个将视觉空间转化为触觉语言的 AI 空间地图，给视障者使用，解决他们无法通过视觉建立空间认知的问题。真正做到「人人平等」，让残障人士也可以更好的理解世界。
+
+页面上传全景和说明。后端先用 Gemini 整理出可触摸的空间结构，再把这张图交给 Lux3D 生成网格。视障者摸到的形状，和页面上预览的是同一份 `model.glb`。
+
+接口和节点的完整约定在 [docs/architecture.md](docs/architecture.md)。页面细节在 [frontend/README.md](frontend/README.md)。
+
+## 怎么跑
+
+需要 Python 3.12 和 Node.js。密钥只放在仓库根目录的 `.env`，不进前端。
+
+```bash
+cp .env.example .env
+# 填上 LUX3D_API_KEY 和 OPENROUTER_API_KEY
+uv sync
+./scripts/dev.sh
+```
+
+后端在 <http://127.0.0.1:8000>，页面在 <http://127.0.0.1:5173>。`Ctrl+C` 会同时停下两边。脚本启动前会先结束已经占用 `8000` 和 `5173` 的旧进程；后端如果没有起来，前端不会再启动。
+
+只开后端：`uv run python main.py`。只开前端时，后端要已经在 `8000`：`npm run dev --prefix frontend`。
+
+命令行跑同一条工作流：
+
+```bash
+uv run python -m insta360_hack.cli --prompt "只留一个房间的墙和家具" --image ./room.jpg
+uv run python -m insta360_hack.cli --resume <run_id>
+```
+
+测试：`uv run pytest -q`。
+
+## 页面上怎么用
+
+1. 放入全景。可以点选、拖进框里，或在页面上按 `Ctrl+V` / `⌘V` 粘贴。选中后马上显示在「全景原图」，不必等提交。
+2. 写下要摸到的墙、地面和家具。
+3. 选生成方式，默认是全自动。
+   - **全自动**：提交后一直做到可触摸的模型。
+   - **先看优化图**：空间结构出来后停下。确认后再按「用这张图生成触觉模型」。
+4. 左侧「已有任务」来自 `data/runs`。点一条回到那次的原图、空间结构和模型。地址栏带 `?run=`，刷新不会丢掉正在看的任务。
+
+优化参考图和网格生成都会显示已经用了多久，结束后保留用时。网格还在生成时，预览外圈和右下角的计时框会有一道光在流动。
+
+## 一次任务留下什么
+
+```text
+data/runs/{run_id}/
+  run.json
+  reference.jpg
+  optimized.png
+  model.glb
+  model.stl
+```
+
+`run.json` 就是查询接口的正文。服务重启后，已经提交给厂商的网格会从轮询接着跑。还没创建厂商任务的进行中记录，才会标成中断。
+
+## 配置
+
+| 变量 | 说明 |
+|------|------|
+| `LUX3D_API_KEY` | 必填 |
+| `OPENROUTER_API_KEY` | 必填，只用于 Gemini 图像优化 |
+| `LUX3D_REGION` | `cn`（默认）或 `global` |
+| `LUX3D_BASE_URL` | 可选，覆盖区域默认地址 |
+| `CORS_ORIGINS` | 逗号分隔，默认 `http://localhost:5173` |
+| `DATA_DIR` | 默认 `data` |
+| `RUN_TIMEOUT_SECONDS` | 网格生成和 STL 导出的超时，默认 `2400` |
+| `POLL_INTERVAL_SECONDS` | 轮询间隔，默认 `12` |
