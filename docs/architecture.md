@@ -92,6 +92,7 @@ img-to-3d:
                      若是 image_url，先下载一份到 reference.*，供前端显示
                      写完立刻填 outputs.reference_image（第一张）和 outputs.reference_images
   plan_cutaway       用户提交的第一级说明和全部参考图交给 DeepSeek
+                     送出前把每张图收成最长边 2048 的 JPEG，原图仍留在磁盘上显示
                      写成的剖面说明留在 artifacts.image_prompt
                      mode=confirm 时停在 awaiting_image，不出图
   optimize_image     只按 image_prompt 和全部参考图交给 Gemini

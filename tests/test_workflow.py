@@ -1,10 +1,13 @@
 import asyncio
 import base64
+import io
 import json
 import os
 import time
 from datetime import datetime
 from pathlib import Path
+
+from PIL import Image
 
 import httpx
 from fastapi.testclient import TestClient
@@ -18,8 +21,15 @@ from insta360_hack.lux3d.models import Lux3DTask, output_slots, parse_g1_outputs
 from insta360_hack.nodes import NODES
 from insta360_hack.openrouter.client import OpenRouterClient
 
-PNG = b"\x89PNG-test-image"
-JPG = b"jpeg-planet"
+def _picture(fmt: str, size: tuple[int, int], color: tuple[int, int, int]) -> bytes:
+    image = Image.new("RGB", size, color)
+    buf = io.BytesIO()
+    image.save(buf, format=fmt)
+    return buf.getvalue()
+
+
+PNG = _picture("PNG", (8, 8), (12, 34, 56))
+JPG = _picture("JPEG", (8, 8), (90, 10, 10))
 OPTIMIZED = b"optimized-png"
 
 
@@ -162,16 +172,13 @@ def test_upload_saves_reference_then_downloads_model(tmp_path: Path):
 
     assert body["status"] == "succeeded"
     assert body["artifacts"]["image_url"] == "https://cdn.example/optimized.png"
-    assert images.plans == [
-        {
-            "prompt": "一把浅色原木餐椅\n风格：cartoon",
-            "images": [{"image_bytes": PNG, "media_type": "image/png"}],
-        }
-    ]
+    assert images.plans[0]["prompt"] == "一把浅色原木餐椅\n风格：cartoon"
+    assert images.plans[0]["images"][0]["media_type"] == "image/jpeg"
+    assert images.plans[0]["images"][0]["image_bytes"].startswith(b"\xff\xd8")
     assert images.calls == [
         {
             "prompt": "3D屋剖面：一把浅色原木餐椅\n风格：cartoon",
-            "images": [{"image_bytes": PNG, "media_type": "image/png"}],
+            "images": images.plans[0]["images"],
         }
     ]
     assert body["artifacts"]["image_prompt"] == "3D屋剖面：一把浅色原木餐椅\n风格：cartoon"
@@ -226,13 +233,25 @@ def test_multiple_reference_images_are_kept_and_sent(tmp_path: Path):
         "reference-1.png",
         "reference-2.jpg",
     ]
-    sent = [{"image_bytes": PNG, "media_type": "image/png"}, {"image_bytes": JPG, "media_type": "image/jpeg"}]
-    assert images.plans[0]["images"] == sent
+    sent = images.plans[0]["images"]
+    assert [item["media_type"] for item in sent] == ["image/jpeg", "image/jpeg"]
+    assert all(item["image_bytes"].startswith(b"\xff\xd8") for item in sent)
     assert images.calls[0]["images"] == sent
     assert second.content == JPG
     run_dir = tmp_path / "runs" / body["run_id"]
     assert (run_dir / "reference-1.png").read_bytes() == PNG
     assert (run_dir / "reference-2.jpg").read_bytes() == JPG
+
+
+def test_wide_panorama_is_shrunk_for_the_model():
+    from insta360_hack.nodes.references import MODEL_EDGE, for_model
+
+    wide = _picture("JPEG", (3000, 1200), (1, 2, 3))
+    raw, media = for_model(wide, "image/jpeg")
+    opened = Image.open(io.BytesIO(raw))
+    assert media == "image/jpeg"
+    assert opened.size[0] == MODEL_EDGE
+    assert opened.size[1] < MODEL_EDGE
 
 
 def test_too_many_reference_images_rejected(tmp_path: Path):

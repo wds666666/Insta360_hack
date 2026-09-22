@@ -21,6 +21,20 @@ type Props = {
   run: RunRecord | null;
 };
 
+function friendlyError(message: string): { summary: string; detail: string | null } {
+  if (message.includes("unsupported image")) {
+    return {
+      summary: "参考图尺寸或编码不兼容。请重新提交，系统会先把图片缩小并转成标准 JPEG。",
+      detail: message,
+    };
+  }
+  const separator = message.indexOf(": HTTP ");
+  return {
+    summary: separator > 0 ? message.slice(0, separator) : message,
+    detail: separator > 0 ? message : null,
+  };
+}
+
 export function StageList({ run }: Props) {
   const nodes = run?.nodes ?? [];
   const ticking = nodes.some(
@@ -35,6 +49,7 @@ export function StageList({ run }: Props) {
     run?.artifacts.lux3d_stage && run.artifacts.lux3d_status_label
       ? `${run.artifacts.lux3d_stage} · ${run.artifacts.lux3d_status_label}`
       : null;
+  const error = run?.error ? friendlyError(run.error.message) : null;
 
   return (
     <section className="stages" aria-label="生成进度">
@@ -62,10 +77,17 @@ export function StageList({ run }: Props) {
         ))}
       </ol>
       {vendor ? <p className="vendor">{vendor}</p> : null}
-      {run?.error ? (
-        <p className="error" role="alert">
-          {run.error.message}
-        </p>
+      {error ? (
+        <div className="error-card" role="alert">
+          <strong>这一步没有完成</strong>
+          <p>{error.summary}</p>
+          {error.detail ? (
+            <details>
+              <summary>查看技术信息</summary>
+              <code>{error.detail}</code>
+            </details>
+          ) : null}
+        </div>
       ) : null}
     </section>
   );

@@ -9,6 +9,14 @@ import { formatDuration, meshSeconds, stepSeconds, useNow } from "./meshTime";
 import type { RunRecord, RunSummary } from "./types";
 
 const RUN_KEY = "chujian-run-id";
+const RUN_STATUS: Record<string, string> = {
+  pending: "等待开始",
+  running: "正在生成",
+  awaiting_image: "等待确认说明",
+  awaiting_mesh: "等待确认模型",
+  succeeded: "生成完成",
+  failed: "生成失败",
+};
 
 function runFromUrl(): string | null {
   return new URLSearchParams(window.location.search).get("run");
@@ -151,7 +159,7 @@ export function App() {
         </div>
       </header>
       <div className="layout">
-        <aside>
+        <aside className="control-rail">
           <TaskList
             tasks={tasks}
             selectedId={runId}
@@ -212,7 +220,14 @@ export function App() {
           ) : null}
           <StageList run={run} />
         </aside>
-        <main>
+        <main className="workspace">
+          <header className="workspace-head">
+            <div>
+              <h2>{run ? "空间工作台" : "新建触觉地图"}</h2>
+              <p>{run ? "对照原始空间、剖面结构与最终触觉模型。" : "先在左侧放入同一空间的参考图。"}</p>
+            </div>
+            {run ? <span className={`run-state is-${run.status}`}>{RUN_STATUS[run.status] ?? run.status}</span> : null}
+          </header>
           <div className="images">
             <ImagePanel
               title="全景原图"

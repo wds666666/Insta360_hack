@@ -1,9 +1,14 @@
+import io
+
+from PIL import Image, UnidentifiedImageError
+
 from insta360_hack.engine.context import RunContext
 from insta360_hack.engine.errors import NodeError
 
 MEDIA = {".jpg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}
 SUFFIXES = set(MEDIA)
 MAX_REFERENCE_IMAGES = 8
+MODEL_EDGE = 2048
 
 
 def reference_names(record: dict) -> list[str]:
@@ -25,5 +30,19 @@ def load_reference_images(ctx: RunContext) -> list[tuple[bytes, str]]:
         media_type = MEDIA.get(suffix)
         if media_type is None:
             raise NodeError("INVALID_INPUT", "参考图只支持 jpg、png、webp")
-        loaded.append(((ctx.run_dir() / name).read_bytes(), media_type))
+        loaded.append(for_model((ctx.run_dir() / name).read_bytes(), media_type))
     return loaded
+
+
+def for_model(raw: bytes, media_type: str) -> tuple[bytes, str]:
+    """DeepSeek 拒绝单边超过 8192 的图。全景往往更宽，先收成普通 JPEG 再送出。"""
+    try:
+        image = Image.open(io.BytesIO(raw))
+        image.load()
+    except (UnidentifiedImageError, OSError) as exc:
+        raise NodeError("INVALID_INPUT", "参考图打不开，请换成 jpg、png 或 webp") from exc
+    image = image.convert("RGB")
+    image.thumbnail((MODEL_EDGE, MODEL_EDGE), Image.Resampling.LANCZOS)
+    out = io.BytesIO()
+    image.save(out, format="JPEG", quality=85)
+    return out.getvalue(), "image/jpeg"
