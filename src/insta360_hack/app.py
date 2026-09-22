@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 
 import httpx
@@ -6,6 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from insta360_hack.api.runs import router
 from insta360_hack.config import Settings, load_settings
+from insta360_hack.engine.context import make_context
+from insta360_hack.engine.runner import run_workflow
 from insta360_hack.engine.store import RunStore
 from insta360_hack.lux3d.client import Lux3DClient
 from insta360_hack.openrouter.client import OpenRouterClient
@@ -30,7 +33,29 @@ def create_app(
         else:
             app.state.client = client
             app.state.images = images
+        resumes = [
+            asyncio.create_task(
+                run_workflow(
+                    make_context(
+                        record,
+                        image_bytes=None,
+                        image_suffix=None,
+                        client=app.state.client,
+                        images=app.state.images,
+                        settings=settings,
+                        store=store,
+                    ),
+                    start_at=start_at,
+                )
+            )
+            for record, start_at in store.pending_resumes
+        ]
+        store.pending_resumes.clear()
         yield
+        for task in resumes:
+            task.cancel()
+        if resumes:
+            await asyncio.gather(*resumes, return_exceptions=True)
         if http is not None:
             await http.aclose()
 

@@ -2,7 +2,7 @@ import re
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from insta360_hack.engine.context import make_context
 from insta360_hack.engine.runner import run_workflow
@@ -32,6 +32,7 @@ async def create_run(
     prompt: str = Form(...),
     style: str | None = Form(None),
     image_url: str | None = Form(None),
+    mode: str = Form("auto"),
     image: UploadFile | None = File(None),
 ):
     if workflow_id != WORKFLOW_ID:
@@ -43,12 +44,15 @@ async def create_run(
     if style is not None and style not in STYLES:
         raise HTTPException(status_code=422, detail="style 不在允许列表")
     image_url = (image_url or "").strip() or None
+    mode = (mode or "auto").strip()
+    if mode not in {"auto", "confirm"}:
+        raise HTTPException(status_code=422, detail="mode 只能是 auto 或 confirm")
     image_bytes, image_suffix = await _read_image(image)
     if bool(image_bytes) == bool(image_url):
         raise HTTPException(status_code=422, detail="参考图文件和 image_url 需要二选一")
 
     run_id = uuid.uuid4().hex
-    record = new_record(run_id, prompt=prompt, style=style, image_url=image_url)
+    record = new_record(run_id, prompt=prompt, style=style, image_url=image_url, mode=mode)
     store = request.app.state.store
     store.create(record)
     ctx = make_context(
@@ -64,12 +68,43 @@ async def create_run(
     return {"run_id": run_id, "workflow_id": WORKFLOW_ID, "status": "pending"}
 
 
+_NO_STORE = {"Cache-Control": "no-store"}
+
+
+@router.get("/runs")
+async def list_runs(request: Request):
+    return JSONResponse({"runs": request.app.state.store.summaries()}, headers=_NO_STORE)
+
+
+@router.post("/runs/{run_id}/mesh", status_code=202)
+async def continue_mesh(run_id: str, request: Request, background_tasks: BackgroundTasks):
+    store = request.app.state.store
+    record = store.get(run_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="run 不存在")
+    if record.get("status") != "awaiting_mesh":
+        raise HTTPException(status_code=409, detail="现在不能生成网格")
+    record["status"] = "running"
+    store.save(record)
+    ctx = make_context(
+        record,
+        image_bytes=None,
+        image_suffix=None,
+        client=request.app.state.client,
+        images=request.app.state.images,
+        settings=request.app.state.settings,
+        store=store,
+    )
+    background_tasks.add_task(run_workflow, ctx, start_at="upload_image")
+    return {"run_id": run_id, "workflow_id": WORKFLOW_ID, "status": "running"}
+
+
 @router.get("/runs/{run_id}")
 async def get_run(run_id: str, request: Request):
     record = request.app.state.store.get(run_id)
     if record is None:
         raise HTTPException(status_code=404, detail="run 不存在")
-    return record
+    return JSONResponse(record, headers=_NO_STORE)
 
 
 @router.get("/runs/{run_id}/files/{name}")

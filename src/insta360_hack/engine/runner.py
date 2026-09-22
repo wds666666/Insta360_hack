@@ -6,7 +6,7 @@ from insta360_hack.lux3d.client import Lux3DError
 from insta360_hack.nodes import NODES
 
 
-async def run_workflow(ctx: RunContext) -> None:
+async def run_workflow(ctx: RunContext, *, start_at: str | None = None) -> None:
     record = ctx.record
     record["status"] = "running"
     ctx.touch()
@@ -15,7 +15,12 @@ async def run_workflow(ctx: RunContext) -> None:
     actual = [item["name"] for item in record["nodes"]]
     if expected != actual:
         raise RuntimeError("节点列表与 run 不一致")
+    started = start_at is None
     for index, node in enumerate(nodes):
+        if not started:
+            if node.name != start_at:
+                continue
+            started = True
         if time.monotonic() > ctx.deadline:
             _fail(ctx, index, NodeError("TIMEOUT", "任务超时"))
             return
@@ -29,6 +34,11 @@ async def run_workflow(ctx: RunContext) -> None:
             return
         record["nodes"][index]["status"] = "succeeded"
         ctx.touch()
+        if node.name == "optimize_image" and record["inputs"].get("mode") == "confirm":
+            record["status"] = "awaiting_mesh"
+            record["current_node"] = None
+            ctx.touch()
+            return
     record["status"] = "succeeded"
     record["current_node"] = None
     ctx.touch()

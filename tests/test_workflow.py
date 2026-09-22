@@ -1,6 +1,9 @@
 import asyncio
 import base64
 import json
+import os
+import time
+from datetime import datetime
 from pathlib import Path
 
 import httpx
@@ -95,9 +98,19 @@ def _settings(tmp_path: Path) -> Settings:
     )
 
 
-def _client(tmp_path: Path, fake: FakeLux3D, images: FakeImages) -> TestClient:
+def _client(
+    tmp_path: Path,
+    fake: FakeLux3D,
+    images: FakeImages,
+    store: RunStore | None = None,
+) -> TestClient:
     settings = _settings(tmp_path)
-    app = create_app(settings, client=fake, images=images, store=RunStore(settings.data_dir / "runs"))
+    app = create_app(
+        settings,
+        client=fake,
+        images=images,
+        store=store or RunStore(settings.data_dir / "runs"),
+    )
     return TestClient(app)
 
 
@@ -132,6 +145,7 @@ def test_upload_saves_reference_then_downloads_model(tmp_path: Path):
         stl = client.get(body["outputs"]["model_stl"])
         reference = client.get(body["outputs"]["reference_image"])
         optimized = client.get(body["outputs"]["optimized_image"])
+        listed = client.get("/api/v1/runs").json()["runs"]
 
     assert body["status"] == "succeeded"
     assert body["artifacts"]["image_url"] == "https://cdn.example/optimized.png"
@@ -161,6 +175,14 @@ def test_upload_saves_reference_then_downloads_model(tmp_path: Path):
     assert reference.content == PNG
     assert optimized.content == OPTIMIZED
     assert body["nodes"][2]["label"] == "优化参考图"
+    assert isinstance(body["artifacts"]["poll_mesh_elapsed_seconds"], int)
+    assert body["artifacts"]["poll_mesh_started_at"]
+    assert isinstance(body["artifacts"]["optimize_image_elapsed_seconds"], int)
+    assert body["artifacts"]["optimize_image_started_at"]
+    assert body["inputs"]["mode"] == "auto"
+    assert listed[0]["run_id"] == run_id
+    assert listed[0]["prompt"] == "一把浅色原木餐椅"
+    assert listed[0]["reference_image"].endswith("/reference.png")
 
 
 def test_upload_failure_stops_before_create(tmp_path: Path):
@@ -185,15 +207,131 @@ def test_upload_failure_stops_before_create(tmp_path: Path):
     assert (run_dir / "optimized.png").read_bytes() == OPTIMIZED
 
 
+def test_list_runs_reads_saved_tasks_newest_first(tmp_path: Path):
+    root = tmp_path / "runs"
+    older = new_record("older", prompt="旧椅子", style=None, image_url=None)
+    newer = new_record("newer", prompt="新房间", style=None, image_url=None)
+    missing_time = new_record("plain", prompt="没有时间戳", style=None, image_url=None)
+    older["created_at"] = "2026-09-22T01:00:00+00:00"
+    newer["created_at"] = "2026-09-22T03:00:00+00:00"
+    del missing_time["created_at"]
+    store = RunStore(root, recover=False)
+    store.create(older)
+    store.create(missing_time)
+    store.create(newer)
+    plain_file = root / "plain" / "run.json"
+    middle = datetime.fromisoformat("2026-09-22T02:00:00+00:00").timestamp()
+    os.utime(plain_file, (middle, middle))
+    reloaded = RunStore(root, recover=False)
+    with _client(tmp_path, FakeLux3D(), FakeImages(), store=reloaded) as client:
+        body = client.get("/api/v1/runs").json()
+    assert [item["run_id"] for item in body["runs"]] == ["newer", "plain", "older"]
+    assert body["runs"][0]["prompt"] == "新房间"
+    assert body["runs"][1]["created_at"]
+
+
+def test_list_runs_includes_a_folder_not_loaded_in_memory(tmp_path: Path):
+    root = tmp_path / "runs"
+    store = RunStore(root, recover=False)
+    record = new_record("disk-only", prompt="只在磁盘上", style=None, image_url=None)
+    directory = root / "disk-only"
+    directory.mkdir(parents=True)
+    (directory / "run.json").write_text(json.dumps(record))
+    (directory / "reference.jpg").write_bytes(b"jpg")
+    with _client(tmp_path, FakeLux3D(), FakeImages(), store=store) as client:
+        body = client.get("/api/v1/runs").json()
+        opened = client.get("/api/v1/runs/disk-only")
+    assert body["runs"][0]["run_id"] == "disk-only"
+    assert body["runs"][0]["reference_image"].endswith("/reference.jpg")
+    assert opened.status_code == 200
+
+
+def test_confirm_mode_waits_for_mesh_decision(tmp_path: Path):
+    fake = FakeLux3D()
+    images = FakeImages()
+    with _client(tmp_path, fake, images) as client:
+        created = client.post(
+            "/api/v1/runs",
+            data={"workflow_id": "img-to-3d", "prompt": "一间空房间", "mode": "confirm"},
+            files={"image": ("ref.png", PNG, "image/png")},
+        )
+        assert created.status_code == 202
+        run_id = created.json()["run_id"]
+        paused = client.get(f"/api/v1/runs/{run_id}").json()
+        assert paused["status"] == "awaiting_mesh"
+        assert paused["outputs"]["optimized_image"].endswith("/optimized.png")
+        assert paused["outputs"]["model_glb"] is None
+        assert paused["nodes"][2]["status"] == "succeeded"
+        assert paused["nodes"][3]["status"] == "pending"
+        assert fake.created == []
+        refused = client.post("/api/v1/runs/missing/mesh")
+        assert refused.status_code == 404
+        continued = client.post(f"/api/v1/runs/{run_id}/mesh")
+        assert continued.status_code == 202
+        done = client.get(f"/api/v1/runs/{run_id}").json()
+        assert done["status"] == "succeeded"
+        assert done["outputs"]["model_glb"].endswith("/model.glb")
+        assert fake.created == [
+            {"img": "https://cdn.example/optimized.png", "version": "G1", "outputFormat": ["glb"]}
+        ]
+        again = client.post(f"/api/v1/runs/{run_id}/mesh")
+        assert again.status_code == 409
+
+
+def test_awaiting_mesh_survives_restart(tmp_path: Path):
+    root = tmp_path / "runs"
+    record = new_record("pause", prompt="房间", style=None, image_url=None, mode="confirm")
+    record["status"] = "awaiting_mesh"
+    RunStore(root).create(record)
+    assert RunStore(root).get("pause")["status"] == "awaiting_mesh"
+
+
 def test_restart_marks_running_task_interrupted(tmp_path: Path):
     root = tmp_path / "runs"
     record = new_record("abc", prompt="椅子", style=None, image_url="https://cdn.example/a.jpg")
     record["status"] = "running"
+    record["current_node"] = "optimize_image"
+    record["nodes"][0]["status"] = "succeeded"
+    record["nodes"][1]["status"] = "succeeded"
+    record["nodes"][2]["status"] = "running"
     RunStore(root).create(record)
     reloaded = RunStore(root)
-    assert reloaded.get("abc")["status"] == "failed"
-    assert reloaded.get("abc")["error"]["code"] == "INTERRUPTED"
+    saved = reloaded.get("abc")
+    assert saved["status"] == "failed"
+    assert saved["error"]["code"] == "INTERRUPTED"
+    assert saved["nodes"][2]["status"] == "failed"
+    assert saved["nodes"][3]["status"] == "skipped"
     assert json.loads((root / "abc" / "run.json").read_text())["status"] == "failed"
+
+
+def test_restart_resumes_interrupted_mesh(tmp_path: Path):
+    root = tmp_path / "runs"
+    record = new_record("mesh", prompt="房间", style=None, image_url=None)
+    record["status"] = "failed"
+    record["error"] = {"code": "INTERRUPTED", "message": "服务重启，任务中断"}
+    record["artifacts"] = {"lux3d_task_id": 99, "image_url": "https://cdn.example/optimized.png"}
+    for node in record["nodes"]:
+        if node["name"] == "poll_mesh":
+            node["status"] = "running"
+            break
+        node["status"] = "succeeded"
+    store = RunStore(root)
+    store.create(record)
+    reloaded = RunStore(root)
+    assert reloaded.get("mesh")["status"] == "running"
+    assert reloaded.pending_resumes[0][1] == "poll_mesh"
+    fake = FakeLux3D()
+    with _client(tmp_path, fake, FakeImages(), store=reloaded) as client:
+        deadline = time.monotonic() + 3
+        body = {"status": "running"}
+        while time.monotonic() < deadline:
+            body = client.get("/api/v1/runs/mesh").json()
+            if body["status"] in {"succeeded", "failed"}:
+                break
+            time.sleep(0.05)
+    assert body["status"] == "succeeded", body.get("error")
+    assert body["outputs"]["model_glb"].endswith("/model.glb")
+    assert (root / "mesh" / "model.glb").read_bytes() == b"glb"
 
 
 def test_openrouter_sends_reference_image():

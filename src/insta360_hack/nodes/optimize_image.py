@@ -1,3 +1,6 @@
+import time
+from datetime import datetime, timezone
+
 from insta360_hack.engine.context import RunContext
 from insta360_hack.engine.errors import NodeError
 from insta360_hack.openrouter.client import OpenRouterError
@@ -20,12 +23,17 @@ class OptimizeImage:
         style = ctx.record["inputs"].get("style")
         if style:
             prompt = f"{prompt}\n风格：{style}"
+        started = time.time()
+        ctx.record["artifacts"]["optimize_image_started_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        ctx.touch()
         try:
             raw, out_type = await ctx.images.generate(
                 prompt=prompt, image_bytes=source.read_bytes(), media_type=media_type
             )
         except OpenRouterError as exc:
+            ctx.record["artifacts"]["optimize_image_elapsed_seconds"] = max(0, int(time.time() - started))
             raise NodeError(exc.code, exc.message) from exc
+        ctx.record["artifacts"]["optimize_image_elapsed_seconds"] = max(0, int(time.time() - started))
         out_suffix = _SUFFIX.get(out_type)
         if out_suffix is None:
             raise NodeError("IMAGE", f"优化参考图格式不支持: {out_type}")

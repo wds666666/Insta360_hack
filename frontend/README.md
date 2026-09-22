@@ -1,0 +1,70 @@
+# 触见前端
+
+给视障者做空间地图的页面。上传全景和空间说明，看整理后的空间结构，再用 Three.js 预览可触摸的模型。
+
+我们做了一个将视觉空间转化为触觉语言的 AI 空间地图，给视障者使用，解决他们无法通过视觉建立空间认知的问题。
+
+团队口号：真正做到「人人平等」，让残障人士也可以更好的理解世界。
+
+## 页面上有什么
+
+- 已有任务：打开页面就列出 `data/runs` 里的任务。点一条回到那次的原图、空间结构和模型。地址栏带 `?run=`，刷新仍停在这一条。「新任务」清空当前选择。
+- 全景图和空间说明。按下「生成触觉地图」后创建一次 `img-to-3d`。有任务还在进行时不能再开新的。
+- 进度列出后端返回的九个步骤。网格生成时按开始时间每秒刷新「已进行」，结束后保留「用时」。
+- 全景原图：拍摄到的视觉空间。一有地址就显示，本地选中的图会先占这个位置。
+- 空间结构：去掉人物、杂物和文字后的优化图。
+- 触觉模型：只加载 `outputs.model_glb`。视障者摸到的是同一份形状，页面不渲染 STL。
+
+`pending` 和 `running` 时每 2 秒查询一次，成功或失败后停止。
+
+## 目录
+
+```text
+frontend/
+  index.html          页面标题和字体
+  package.json
+  vite.config.ts      5173，把 /api 代理到 127.0.0.1:8000
+  src/main.tsx
+  src/App.tsx         名称、定位、口号，以及轮询
+  src/api.ts          列出、创建和查询 run
+  src/meshTime.ts     网格生成用时
+  src/types.ts
+  src/styles.css
+  src/components/
+    TaskList.tsx      data/runs 里的任务
+    PromptForm.tsx    全景和空间说明
+    StageList.tsx     步骤进度
+    ImagePanel.tsx    原图和优化图
+    GlbViewer.tsx     Three.js 视口
+```
+
+构建用 Vite。3D 用 `three` 的 `GLTFLoader` 和 `OrbitControls`。
+
+## 启动
+
+仓库根目录：
+
+```bash
+./scripts/dev.sh
+```
+
+脚本会在需要时安装前端依赖，后台启动后端 `8000`，前台启动前端 `5173`。退出时关掉后端。
+
+只开前端时，后端要已经在 `8000`：
+
+```bash
+npm run dev --prefix frontend
+```
+
+页面请求走相对路径 `/api/v1/...`，不使用厂商的临时地址。
+
+## 接口
+
+| 动作 | 接口 |
+|------|------|
+| 已有任务 | `GET /api/v1/runs` |
+| 创建 | `POST /api/v1/runs`，表单字段 `workflow_id=img-to-3d`、`prompt`、`image` |
+| 进度 | `GET /api/v1/runs/{id}` |
+| 图片和模型 | `GET /api/v1/runs/{id}/files/{name}` |
+
+`outputs.reference_image`、`outputs.optimized_image`、`outputs.model_glb` 有路径就显示，不必等整个任务结束。

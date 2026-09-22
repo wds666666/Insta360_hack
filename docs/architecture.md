@@ -15,6 +15,7 @@
         ▼
 FastAPI
   POST /api/v1/runs          立即 202 + run_id
+  GET  /api/v1/runs          列出 data/runs 里已有的任务，新的在前
   GET  /api/v1/runs/{id}     轮询状态；outputs 里已完成的图随时可读
   GET  /api/v1/runs/{id}/files/{name}   读原图、优化图和模型
         │
@@ -54,12 +55,13 @@ Lux3D 的 `img` 必须是它能访问的 URL。本地文件不能直接当 `img`
 ### v1 做
 
 - 工作流 `img-to-3d`：一张参考图 + prompt → 本地保存参考图 → Gemini 优化图写入 `data/runs/{id}/optimized.*` → Asset 上传优化图 → 图生 3D `G1` → 轮询 → 把 `model.glb` / `model.stl` 下载到本地。
-- FastAPI：创建 run、查询 run、读取 run 目录里的文件。查询在每一步完成后就能看到已落地的原图、优化图和模型。
-- `run.json` 写在 run 目录里，进程重启后仍能查到已结束的任务。重启时若任务还在 `pending` / `running`，标为失败 `INTERRUPTED`。
+- FastAPI：创建 run、列出已有 run、查询 run、读取 run 目录里的文件。查询在每一步完成后就能看到已落地的原图、优化图和模型。网格生成时写入本阶段开始时间和已用秒数。
+- 前端「触见」：上传全景和空间说明，显示原图、优化图、步骤进度，并用 Three.js 预览 GLB。说明见 [frontend/README.md](../frontend/README.md)。
+- `run.json` 写在 run 目录里，进程重启后仍能查到已结束的任务。重启时若网格任务已经创建（有 `lux3d_task_id` 或导出任务），从对应轮询接着跑，不把这次网格丢掉。还没创建厂商任务的 `pending` / `running` 才标为失败 `INTERRUPTED`。
 
 ### v1 不做
 
-- 文生 3D、多模态单图、四视图、材质重绘、前端页面、登录、数据库、任务队列。
+- 文生 3D、多模态单图、四视图、材质重绘、登录、数据库、任务队列。
 - 条件分支。
 
 ### 为什么现在是图生 3D
@@ -101,7 +103,7 @@ img-to-3d:
 
 ## 6. 运行与文件
 
-run 状态：`pending → running → succeeded | failed`。  
+run 状态：`pending → running → succeeded | failed`。`mode=confirm` 时优化图完成后停在 `awaiting_mesh`，确认后再回到 `running`。  
 节点状态：`pending → running → succeeded | failed | skipped`。  
 Lux3D 任务状态单独放在 `artifacts.lux3d_status`，并带 `lux3d_status_label`：`0` 初始化，`1` 运行中，`3` 成功，`4` 失败，`6` 已取消。产物只要网格，不保存高斯 PLY。
 
@@ -131,11 +133,33 @@ Base：`/api/v1`。CORS 来源读 `CORS_ORIGINS`。
 | `image` | 与 `image_url` 二选一 | 参考图，jpg / png / webp，最大 20MB |
 | `image_url` | 与 `image` 二选一 | 已是公网 URL，仍会先下载再优化 |
 | `style` | 否 | `photorealistic` `cartoon` `anime` `hand_painted` `cyberpunk` `fantasy` `glass`，拼进 Gemini 提示词 |
+| `mode` | 否 | `auto`（默认）一直做到网格。`confirm` 在优化图写入后停在 `awaiting_mesh`，等 `POST /api/v1/runs/{id}/mesh` 再继续 |
 
 缺字段、两个图都传、类型不对：`422`，不创建 run。成功 `202`：
 
 ```json
 { "run_id": "...", "workflow_id": "img-to-3d", "status": "pending" }
+```
+
+### 列出已有任务
+
+`GET /api/v1/runs`
+
+读 `data/runs/*/run.json`，按 `created_at` 新的在前。更早的任务如果没有 `created_at`，用 `run.json` 的修改时间。每条只返回打开任务需要的摘要：
+
+```json
+{
+  "runs": [
+    {
+      "run_id": "...",
+      "status": "succeeded",
+      "created_at": "2026-09-22T07:30:00+00:00",
+      "prompt": "...",
+      "current_label": null,
+      "reference_image": "/api/v1/runs/.../files/reference.jpg"
+    }
+  ]
+}
 ```
 
 ### 查询
@@ -149,6 +173,7 @@ Base：`/api/v1`。CORS 来源读 `CORS_ORIGINS`。
   "run_id": "...",
   "workflow_id": "img-to-3d",
   "status": "running",
+  "created_at": "2026-09-22T07:30:00+00:00",
   "current_node": "optimize_image",
   "nodes": [{ "name": "save_image", "label": "保存参考图", "status": "succeeded" }],
   "inputs": { "prompt": "...", "style": null, "image_url": null },
@@ -159,7 +184,10 @@ Base：`/api/v1`。CORS 来源读 `CORS_ORIGINS`。
     "lux3d_task_id": 1256173,
     "lux3d_status": 1,
     "lux3d_status_label": "运行中",
-    "lux3d_stage": "网格生成"
+    "lux3d_stage": "网格生成",
+    "lux3d_elapsed_seconds": 96,
+    "poll_mesh_started_at": "2026-09-22T07:31:00+00:00",
+    "poll_mesh_elapsed_seconds": 96
   },
   "outputs": {
     "reference_image": "/api/v1/runs/.../files/reference.jpg",
@@ -171,7 +199,7 @@ Base：`/api/v1`。CORS 来源读 `CORS_ORIGINS`。
 }
 ```
 
-`nodes[].label` 是中文步骤名。厂商临时 URL 留在 `artifacts`，页面不用它们。
+`nodes[].label` 是中文步骤名。厂商临时 URL 留在 `artifacts`，页面不用它们。网格生成开始时写入 `poll_mesh_started_at`，轮询中更新 `poll_mesh_elapsed_seconds`。结束后这个秒数保留，用来显示用时。
 
 未知 run：`404`。失败时 `error` 为 `{ "code", "message" }`，已创建的 `lux3d_task_id` 保留。
 
@@ -221,10 +249,13 @@ src/insta360_hack/
   openrouter/      Gemini 图像优化
   lux3d/           client 与 G1 槽位解析
 data/runs/         gitignore，含 reference、optimized、model.glb、model.stl
+frontend/            触见页面，见 frontend/README.md
+scripts/dev.sh       同时启动后端和前端
 ```
 
+一起启动：`./scripts/dev.sh`。后端默认 `0.0.0.0:8000`，前端 `http://127.0.0.1:5173`。  
 开发自测：`uv run python -m insta360_hack.cli --prompt "..." --image ./ref.jpg`  
-服务：`uv run python main.py`，默认 `0.0.0.0:8000`。
+只开后端：`uv run python main.py`。
 
 ## 10. 配置
 
