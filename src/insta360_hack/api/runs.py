@@ -13,7 +13,7 @@ from insta360_hack.nodes.validate import STYLES
 
 router = APIRouter(prefix="/api/v1")
 _MAX_IMAGE_BYTES = 20 * 1024 * 1024
-_FILE_NAME = re.compile(r"^(reference\.(jpg|png|webp)|model\.(glb|stl))$")
+_FILE_NAME = re.compile(r"^(reference\.(jpg|png|webp)|optimized\.(jpg|png|webp)|model\.(glb|stl))$")
 _MEDIA = {
     ".jpg": "image/jpeg",
     ".png": "image/png",
@@ -35,7 +35,7 @@ async def create_run(
     image: UploadFile | None = File(None),
 ):
     if workflow_id != WORKFLOW_ID:
-        raise HTTPException(status_code=422, detail="v1 只支持 text-to-3d")
+        raise HTTPException(status_code=422, detail="v1 只支持 img-to-3d")
     prompt = prompt.strip()
     if not prompt:
         raise HTTPException(status_code=422, detail="prompt 不能为空")
@@ -56,6 +56,7 @@ async def create_run(
         image_bytes=image_bytes,
         image_suffix=image_suffix,
         client=request.app.state.client,
+        images=request.app.state.images,
         settings=request.app.state.settings,
         store=store,
     )

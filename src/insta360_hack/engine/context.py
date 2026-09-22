@@ -12,6 +12,7 @@ class RunContext:
     image_bytes: bytes | None
     image_suffix: str | None
     client: object
+    images: object
     settings: Settings
     store: RunStore
     deadline: float
@@ -29,6 +30,7 @@ def make_context(
     image_bytes: bytes | None,
     image_suffix: str | None,
     client: object,
+    images: object,
     settings: Settings,
     store: RunStore,
 ) -> RunContext:
@@ -37,6 +39,7 @@ def make_context(
         image_bytes=image_bytes,
         image_suffix=image_suffix,
         client=client,
+        images=images,
         settings=settings,
         store=store,
         deadline=time.monotonic() + settings.run_timeout_seconds,

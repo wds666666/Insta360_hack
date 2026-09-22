@@ -12,10 +12,11 @@ from insta360_hack.engine.runner import run_workflow
 from insta360_hack.engine.store import RunStore, new_record
 from insta360_hack.lux3d.client import Lux3DClient
 from insta360_hack.nodes.save_image import suffix_from_name
+from insta360_hack.openrouter.client import OpenRouterClient
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="本地跑文生 3D 工作流")
+    parser = argparse.ArgumentParser(description="本地跑图生 3D 工作流")
     parser.add_argument("--prompt")
     parser.add_argument("--image", type=Path)
     parser.add_argument("--image-url")
@@ -50,6 +51,7 @@ async def _run(args: argparse.Namespace) -> int:
             image_bytes=image_bytes,
             image_suffix=image_suffix,
             client=Lux3DClient(http, settings),
+            images=OpenRouterClient(http, settings),
             settings=settings,
             store=store,
         )
@@ -88,6 +90,7 @@ async def _resume(run_id: str) -> int:
             image_bytes=None,
             image_suffix=None,
             client=Lux3DClient(http, settings),
+            images=None,
             settings=settings,
             store=store,
         )

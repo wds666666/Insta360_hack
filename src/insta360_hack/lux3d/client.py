@@ -42,20 +42,12 @@ class Lux3DClient:
             await self._block_upload(domain, ous_headers, digest, path.name, payload, block_size)
         return await self._wait_upload_url(domain, ous_headers)
 
-    async def create_text_to_3d(self, *, prompt: str, image_url: str, style: str | None) -> int:
-        body: dict = {
-            "prompt": prompt,
-            "img": image_url,
-            "version": "G1",
-            "outputFormat": ["glb"],
-        }
-        if style:
-            body["style"] = style
+    async def create_img_to_3d(self, *, image_url: str) -> int:
         data = await self._request(
             "POST",
-            self._gateway("/lux3d/v1/generate/text-to-3d/task/create"),
+            self._gateway("/lux3d/v1/generate/img-to-3d/task/create"),
             headers={**self._headers(), "Content-Type": "application/json"},
-            json=body,
+            json={"img": image_url, "version": "G1", "outputFormat": ["glb"]},
         )
         return int(self._unwrap(data))
 

@@ -37,7 +37,10 @@ class SaveImage:
             filename = f"reference{suffix}"
             await _download(url, directory / filename)
         ctx.record["artifacts"]["reference_name"] = filename
-        ctx.record["artifacts"]["reference_file"] = f"/api/v1/runs/{ctx.record['run_id']}/files/{filename}"
+        file_path = f"/api/v1/runs/{ctx.record['run_id']}/files/{filename}"
+        ctx.record["artifacts"]["reference_file"] = file_path
+        ctx.record["outputs"]["reference_image"] = file_path
+        ctx.touch()
 
 
 async def _download(url: str, dest: Path) -> None:

@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from insta360_hack.engine.workflows import NODE_NAMES, WORKFLOW_ID
+from insta360_hack.engine.workflows import NODE_SPECS, WORKFLOW_ID
 
 
 def new_record(run_id: str, *, prompt: str, style: str | None, image_url: str | None) -> dict:
@@ -10,10 +10,15 @@ def new_record(run_id: str, *, prompt: str, style: str | None, image_url: str | 
         "workflow_id": WORKFLOW_ID,
         "status": "pending",
         "current_node": None,
-        "nodes": [{"name": name, "status": "pending"} for name in NODE_NAMES],
+        "nodes": [{"name": name, "label": label, "status": "pending"} for name, label in NODE_SPECS],
         "inputs": {"prompt": prompt, "style": style, "image_url": image_url},
         "artifacts": {},
-        "outputs": None,
+        "outputs": {
+            "reference_image": None,
+            "optimized_image": None,
+            "model_glb": None,
+            "model_stl": None,
+        },
         "error": None,
     }
 

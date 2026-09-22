@@ -1,7 +1,7 @@
 [project]
 name = "insta360-hack"
 version = "0.1.0"
-description = "Handwritten text-to-3d workflow API"
+description = "Handwritten image-to-3d workflow API"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",

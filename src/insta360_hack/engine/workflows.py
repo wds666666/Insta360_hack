@@ -1,12 +1,14 @@
-NODE_NAMES = [
-    "validate",
-    "save_image",
-    "upload_image",
-    "create_text_to_3d",
-    "poll_mesh",
-    "export_stl",
-    "poll_stl",
-    "download_model",
+NODE_SPECS = [
+    ("validate", "校验输入"),
+    ("save_image", "保存参考图"),
+    ("optimize_image", "优化参考图"),
+    ("upload_image", "上传优化图"),
+    ("create_img_to_3d", "创建图生 3D"),
+    ("poll_mesh", "网格生成"),
+    ("export_stl", "导出 STL"),
+    ("poll_stl", "等待导出"),
+    ("download_model", "下载模型"),
 ]
 
-WORKFLOW_ID = "text-to-3d"
+NODE_NAMES = [name for name, _label in NODE_SPECS]
+WORKFLOW_ID = "img-to-3d"

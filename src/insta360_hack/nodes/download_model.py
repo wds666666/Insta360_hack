@@ -18,10 +18,12 @@ class DownloadModel:
         await ctx.client.download(glb_url, directory / "model.glb")
         await ctx.client.download(stl_url, directory / "model.stl")
         run_id = ctx.record["run_id"]
-        ctx.record["outputs"] = {
-            "reference_image": ctx.record["artifacts"].get("reference_file"),
-            "model_glb": f"/api/v1/runs/{run_id}/files/model.glb",
-            "model_stl": f"/api/v1/runs/{run_id}/files/model.stl",
-        }
+        outputs = ctx.record.get("outputs")
+        if not isinstance(outputs, dict):
+            outputs = {}
+            ctx.record["outputs"] = outputs
+        outputs["reference_image"] = ctx.record["artifacts"].get("reference_file")
+        outputs["model_glb"] = f"/api/v1/runs/{run_id}/files/model.glb"
+        outputs["model_stl"] = f"/api/v1/runs/{run_id}/files/model.stl"
         ctx.record["artifacts"]["mesh_glb_url"] = glb_url
         ctx.record["artifacts"]["stl_url"] = stl_url

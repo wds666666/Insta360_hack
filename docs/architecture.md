@@ -5,8 +5,8 @@
 
 ## 1. 系统是什么
 
-前端负责上传参考图、填写提示词、看进度、读取并显示 3D 模型。  
-后端是手写的直线工作流，用 FastAPI 暴露。v1 调用 Lux3D **文生 3D**（`prompt` + 一张参考图 `img`），不套 LLM，不用 Agno / LangGraph。
+前端负责上传参考图、填写提示词、看进度、读取并显示原图、优化图和 3D 模型。  
+后端是手写的直线工作流，用 FastAPI 暴露。用户提示词和参考图先交给 OpenRouter 的 `google/gemini-3.1-flash-image` 生成优化图，再把这张图交给 Lux3D **图生 3D**。提示词不传给 Lux3D。
 
 ```
 浏览器
@@ -15,29 +15,30 @@
         ▼
 FastAPI
   POST /api/v1/runs          立即 202 + run_id
-  GET  /api/v1/runs/{id}     轮询状态
-  GET  /api/v1/runs/{id}/files/{name}   读参考图和模型
+  GET  /api/v1/runs/{id}     轮询状态；outputs 里已完成的图随时可读
+  GET  /api/v1/runs/{id}/files/{name}   读原图、优化图和模型
         │
         ▼
-validate → save_image → upload_image → create_text_to_3d → poll → download_model
+validate → save_image → optimize_image → upload_image → create_img_to_3d
+        → poll_mesh → export_stl → poll_stl → download_model
         │
         ▼
 本地 data/runs/{run_id}/
   reference.jpg
+  optimized.png
   model.glb
-  model.zip
+  model.stl
   run.json
 ```
 
-Lux3D 的 `img` 必须是它能访问的 URL。本地文件不能直接当 `img`。所以顺序是：先把用户上传的参考图写到本地，再走 Asset 上传拿到 URL，然后创建文生 3D。生成结束后把 ZIP / GLB 下载到同一个 run 目录。前端只访问我们的文件接口，不拿厂商的临时 URL（约 2 小时过期）。
+Lux3D 的 `img` 必须是它能访问的 URL。本地文件不能直接当 `img`。所以顺序是：先把用户参考图写到本地，Gemini 优化后再把优化图写到同一目录，再走 Asset 上传拿到 URL，然后创建图生 3D。生成结束后把网格 GLB 和 STL 下载到同一个 run 目录。前端只访问我们的文件接口，不拿厂商的临时 URL（约 2 小时过期）。优化图一写入 `data/runs/{id}/`，查询接口就能返回它，不必等 3D 完成。
 
 ## 2. 为什么现在手写
 
-输入是固定的参考图 + 提示词，节点顺序固定。理解图文并生成 3D 的是 Lux3D。
+输入是固定的参考图 + 提示词，节点顺序固定。理解图文并改图的是 Gemini，把优化图做成网格的是 Lux3D 图生 3D。
 
 - 不引入 Agno、LangGraph、Prefect、Temporal。
-- 不调用别的 LLM 做改写或路由。
-- 提示词原样交给文生 3D。
+- 提示词只交给图像模型，用来优化参考图。图生 3D 不收 prompt。
 
 以后再换执行器，节点函数保持不变：
 
@@ -52,20 +53,18 @@ Lux3D 的 `img` 必须是它能访问的 URL。本地文件不能直接当 `img`
 
 ### v1 做
 
-- 工作流 `text-to-3d`：一张参考图 + prompt → 本地保存参考图 → Asset 上传 → 文生 3D `G1` → 轮询 → 把 `model.glb` / `model.zip` 下载到本地。
-- FastAPI：创建 run、查询 run、读取 run 目录里的文件。
+- 工作流 `img-to-3d`：一张参考图 + prompt → 本地保存参考图 → Gemini 优化图写入 `data/runs/{id}/optimized.*` → Asset 上传优化图 → 图生 3D `G1` → 轮询 → 把 `model.glb` / `model.stl` 下载到本地。
+- FastAPI：创建 run、查询 run、读取 run 目录里的文件。查询在每一步完成后就能看到已落地的原图、优化图和模型。
 - `run.json` 写在 run 目录里，进程重启后仍能查到已结束的任务。重启时若任务还在 `pending` / `running`，标为失败 `INTERRUPTED`。
 
 ### v1 不做
 
-- 图生 3D、多模态单图、四视图、材质重绘、多格式导出、自有生图。图生 3D 的字段约定写在第 8 节，等下一条工作流再接。
-- 前端页面、登录、数据库、任务队列。
+- 文生 3D、多模态单图、四视图、材质重绘、前端页面、登录、数据库、任务队列。
 - 条件分支。
 
-### 为什么 v1 是文生 3D 而不是图生 3D
+### 为什么现在是图生 3D
 
-用户输入同时有 **提示词** 和 **一张参考图**。这对应 `POST /lux3d/v1/generate/text-to-3d/task/create` 的 `prompt` + `img`。  
-图生 3D 只收图片、不收 prompt，留给「没有提示词 / 多张视角」的下一条工作流。
+用户提示词用来让 Gemini 改参考图。3D 只根据优化后的那一张图生成，对应 `POST /lux3d/v1/generate/img-to-3d/task/create` 的 `img`。不把 prompt 再传给 Lux3D。
 
 ## 4. 分层
 
@@ -74,24 +73,28 @@ Lux3D 的 `img` 必须是它能访问的 URL。本地文件不能直接当 `img`
 | `api` | 校验表单、建 run、后台执行、返回状态和文件 |
 | `engine` | 按节点列表执行，更新 `run.json` |
 | `nodes` | 一个节点一件事，不决定下一个是谁 |
-| `lux3d` | 鉴权、Asset 上传、文生 3D、查询、下载文件 |
+| `openrouter` | Gemini 图像优化 |
+| `lux3d` | 鉴权、Asset 上传、图生 3D、查询、下载文件 |
 
 ## 5. 节点
 
 失败抛 `NodeError(code, message)`。当前节点标 `failed`，后面的标 `skipped`，run 结束。厂商错误 `c != "0"` 同样结束 run，`error.code` 用厂商的 `c`。
 
 ```text
-text-to-3d:
+img-to-3d:
   validate           prompt 非空；参考图是文件或 image_url，二选一；style 若有则必须在枚举内
   save_image         上传的文件写入 data/runs/{id}/reference.{jpg|png|webp}
                      若是 image_url，先下载一份到同一路径，供前端显示
-  upload_image       本地文件走 Asset，得到 artifacts.image_url
-                     已经是公网 image_url 时跳过上传，直接使用
-  create_text_to_3d  POST text-to-3d，version 固定 G1，outputFormat 只传 glb，不请求 ply
+                     写完立刻填 outputs.reference_image
+  optimize_image     参考图 + prompt（style 若有则拼进提示词）交给 Gemini
+                     结果写入 data/runs/{id}/optimized.{png|jpg|webp}
+                     写完立刻填 outputs.optimized_image，此时 3D 还没开始
+  upload_image       上传优化图，得到 artifacts.image_url。不把用户原图交给 Lux3D
+  create_img_to_3d   POST img-to-3d，version 固定 G1，outputFormat 只传 glb，不传 prompt、ply
   poll_mesh          轮询网格任务。日志带状态含义和已等待时间，整段超时默认 2400 秒
   export_stl         用网格 GLB 创建多格式导出，只要 stl
   poll_stl           轮询导出任务
-  download_model     只下载 model.glb 和 model.stl
+  download_model     只下载 model.glb 和 model.stl，完成后填这两个 outputs
 ```
 
 加节点：新建 `nodes/` 文件，把名字加进 `workflows.py` 的列表。状态里的 `nodes[]` 按这次 run 的列表返回。
@@ -106,6 +109,7 @@ Lux3D 任务状态单独放在 `artifacts.lux3d_status`，并带 `lux3d_status_l
 data/runs/{run_id}/
   run.json
   reference.jpg
+  optimized.png
   model.glb
   model.stl
 ```
@@ -122,47 +126,52 @@ Base：`/api/v1`。CORS 来源读 `CORS_ORIGINS`。
 
 | 字段 | 必填 | 说明 |
 |------|------|------|
-| `workflow_id` | 是 | 只接受 `text-to-3d` |
-| `prompt` | 是 | 原样传给 Lux3D |
+| `workflow_id` | 是 | 只接受 `img-to-3d` |
+| `prompt` | 是 | 交给 Gemini 优化参考图，不传给 Lux3D |
 | `image` | 与 `image_url` 二选一 | 参考图，jpg / png / webp，最大 20MB |
-| `image_url` | 与 `image` 二选一 | 已是公网 URL |
-| `style` | 否 | `photorealistic` `cartoon` `anime` `hand_painted` `cyberpunk` `fantasy` `glass` |
+| `image_url` | 与 `image` 二选一 | 已是公网 URL，仍会先下载再优化 |
+| `style` | 否 | `photorealistic` `cartoon` `anime` `hand_painted` `cyberpunk` `fantasy` `glass`，拼进 Gemini 提示词 |
 
 缺字段、两个图都传、类型不对：`422`，不创建 run。成功 `202`：
 
 ```json
-{ "run_id": "...", "workflow_id": "text-to-3d", "status": "pending" }
+{ "run_id": "...", "workflow_id": "img-to-3d", "status": "pending" }
 ```
 
 ### 查询
 
 `GET /api/v1/runs/{run_id}`
 
-成功时 `outputs` 是我们自己的路径，前端用它们显示：
+`outputs` 从创建起就有四个键，没完成的是 `null`。文件一落到 `data/runs/{id}/` 就填对应路径，前端用它们显示，不必等整个 run 成功：
 
 ```json
 {
   "run_id": "...",
-  "workflow_id": "text-to-3d",
-  "status": "succeeded",
-  "current_node": null,
-  "nodes": [],
+  "workflow_id": "img-to-3d",
+  "status": "running",
+  "current_node": "optimize_image",
+  "nodes": [{ "name": "save_image", "label": "保存参考图", "status": "succeeded" }],
   "inputs": { "prompt": "...", "style": null, "image_url": null },
   "artifacts": {
     "reference_file": "/api/v1/runs/.../files/reference.jpg",
-    "image_url": "https://...厂商可访问的参考图...",
+    "optimized_file": "/api/v1/runs/.../files/optimized.png",
+    "image_url": "https://...厂商可访问的优化图...",
     "lux3d_task_id": 1256173,
-    "lux3d_status": 3
+    "lux3d_status": 1,
+    "lux3d_status_label": "运行中",
+    "lux3d_stage": "网格生成"
   },
   "outputs": {
     "reference_image": "/api/v1/runs/.../files/reference.jpg",
-    "model_glb": "/api/v1/runs/.../files/model.glb",
-    "model_zip": "/api/v1/runs/.../files/model.zip",
-    "model_ply": null
+    "optimized_image": "/api/v1/runs/.../files/optimized.png",
+    "model_glb": null,
+    "model_stl": null
   },
   "error": null
 }
 ```
+
+`nodes[].label` 是中文步骤名。厂商临时 URL 留在 `artifacts`，页面不用它们。
 
 未知 run：`404`。失败时 `error` 为 `{ "code", "message" }`，已创建的 `lux3d_task_id` 保留。
 
@@ -170,7 +179,7 @@ Base：`/api/v1`。CORS 来源读 `CORS_ORIGINS`。
 
 `GET /api/v1/runs/{run_id}/files/{name}`
 
-只允许该 run 目录下的 `reference.jpg|png|webp`、`model.glb`、`model.zip`、`model.ply`。前端显示模型用 `outputs.model_glb`。
+只允许该 run 目录下的 `reference.jpg|png|webp`、`optimized.jpg|png|webp`、`model.glb`、`model.stl`。前端显示优化图用 `outputs.optimized_image`，显示模型用 `outputs.model_glb`。
 
 ## 8. Lux3D 约定
 
@@ -179,24 +188,24 @@ Base：`/api/v1`。CORS 来源读 `CORS_ORIGINS`。
 | 国内 | `https://api.aholo3d.cn`，路径无前缀 |
 | 国际 | `https://api.aholo3d.com`，路径前缀 `/global` |
 | 鉴权 | `Authorization: <ApiKey>`，不加 `Bearer` |
-| 文生 3D | `POST /lux3d/v1/generate/text-to-3d/task/create` |
+| 图生 3D | `POST /lux3d/v1/generate/img-to-3d/task/create` |
 | 查询 | `GET /lux3d/v1/generate/task/get?taskid=` |
 | 成功 | `c == "0"`。创建结果 `d` 是 taskid。查询结果看 `d.status`，完成后再读 `d.outputs[].content` |
-| G1 文生 3D 请求 | `prompt`、`img`、`version=G1`、`outputFormat=["glb"]`。不传 `ply` |
+| G1 图生 3D 请求 | `img`、`version=G1`、`outputFormat=["glb"]`。不传 `prompt`、`ply` |
 | 网格 GLB | 生成结果按槽位取第 2 项。ZIP 里可能夹带高斯资源，不作为交付物 |
 | STL | `POST /lux3d/v1/multi-format-export/task/create`，`modelUrl` 用上面的 GLB，`outputFormat=["stl"]`。导出结果 7 个槽位，STL 在第 6 项 |
 | 轮询日志 | `status=1 运行中  已等待 36s / 超时 2400s` |
 
-Asset（参考图变成 `img`）：
+Asset（优化图变成 `img`）：
 
 1. `GET /asset/v1/token`，正文是 `ousToken`、`globalDomain`、`blockSize`（不是 `c/m/d`）。
 2. 文件不超过 `blockSize`：`POST {globalDomain}/ous/api/v2/single/upload`，表单字段 `md5` + `file`，头 `ous-token-v2`。
 3. 更大：`POST {globalDomain}/ous/api/v2/block/upload/init?md5&blocks&size&name`，再逐片 `POST /ous/api/v2/block/upload/part`。
 4. `GET {globalDomain}/ous/api/v2/upload/status`，`d.status == 5` 时取 `d.url`。`6` 和 `8` 为失败。OUS 路径不加 `/global`。
 
-### 图生 3D（下一条工作流，v1 不调用）
+### 图生 3D
 
-`POST /lux3d/v1/generate/img-to-3d/task/create`。`version` 必填 `G1` 或 `G1-Turbo`。单图传 `img`，多图传 `imgs`（1–32，第一张最清晰），两者不要同时传。不传 prompt。G1 固定回 ZIP + GLB；G1-Turbo 用 `outputFormat` 选择 `zip` / `glb` / `ply`。查询接口与文生 3D 相同。
+当前工作流调用 `POST /lux3d/v1/generate/img-to-3d/task/create`。`version` 固定 `G1`。单图传 `img`，不传 `imgs`，不传 prompt。`outputFormat` 只传 `glb`。G1 在不含 `ply` 时仍返回 ZIP 和 GLB；只使用第 2 槽的网格 GLB。查询接口与生成任务相同。
 
 ## 9. 代码放哪
 
@@ -208,9 +217,10 @@ src/insta360_hack/
   cli.py
   api/runs.py
   engine/          runner、store、错误
-  nodes/           六个节点
+  nodes/           校验、存图、优化、上传、图生 3D、轮询、导出、下载
+  openrouter/      Gemini 图像优化
   lux3d/           client 与 G1 槽位解析
-data/runs/         gitignore
+data/runs/         gitignore，含 reference、optimized、model.glb、model.stl
 ```
 
 开发自测：`uv run python -m insta360_hack.cli --prompt "..." --image ./ref.jpg`  
@@ -221,6 +231,7 @@ data/runs/         gitignore
 | 变量 | 说明 |
 |------|------|
 | `LUX3D_API_KEY` | 必填 |
+| `OPENROUTER_API_KEY` | 必填，只用于 Gemini 图像优化 |
 | `LUX3D_REGION` | `cn`（默认）或 `global` |
 | `LUX3D_BASE_URL` | 可选，覆盖区域默认 Host |
 | `CORS_ORIGINS` | 逗号分隔，默认 `http://localhost:5173` |
@@ -232,9 +243,10 @@ data/runs/         gitignore
 
 ## 11. 验收
 
-- [ ] 上传参考图 + prompt，run 成功后 `data/runs/{id}/model.glb` 存在。
+- [ ] 上传参考图 + prompt，run 成功后 `data/runs/{id}/model.glb` 和 `optimized.png`（或 jpg / webp）存在。
+- [ ] Gemini 优化图写入后，`GET .../files/optimized.png` 能读到，此时可以还没有模型。
 - [ ] `GET .../files/model.glb` 能读到该文件。
-- [ ] 参考图先出现在 run 目录，再出现在 Lux3D 请求的 `img` 里。
-- [ ] 缺图返回 422，不调用 Lux3D。
-- [ ] 查询能看到当前节点和 `lux3d_task_id`。
+- [ ] Lux3D 的 `img` 是优化图的上传 URL，请求里没有 prompt。
+- [ ] 缺图返回 422，不调用 Gemini，也不调用 Lux3D。
+- [ ] 查询能看到当前节点、中文步骤名和 `lux3d_task_id`。
 - [ ] 依赖里没有 agno、langgraph、langchain。

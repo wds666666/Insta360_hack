@@ -18,6 +18,7 @@ def _load_dotenv() -> None:
 @dataclass(frozen=True)
 class Settings:
     api_key: str
+    openrouter_api_key: str
     base_url: str
     region: str
     cors_origins: list[str]
@@ -44,6 +45,7 @@ def load_settings() -> Settings:
     ]
     return Settings(
         api_key=os.environ.get("LUX3D_API_KEY", "").strip(),
+        openrouter_api_key=os.environ.get("OPENROUTER_API_KEY", "").strip(),
         base_url=base_url,
         region=region,
         cors_origins=origins,
