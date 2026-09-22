@@ -19,15 +19,25 @@ from insta360_hack.nodes import NODES
 from insta360_hack.openrouter.client import OpenRouterClient
 
 PNG = b"\x89PNG-test-image"
+JPG = b"jpeg-planet"
 OPTIMIZED = b"optimized-png"
+
+
+def _recorded(images: list[tuple[bytes, str]]) -> list[dict]:
+    return [{"image_bytes": raw, "media_type": media} for raw, media in images]
 
 
 class FakeImages:
     def __init__(self):
         self.calls: list[dict] = []
+        self.plans: list[dict] = []
 
-    async def generate(self, *, prompt: str, image_bytes: bytes, media_type: str) -> tuple[bytes, str]:
-        self.calls.append({"prompt": prompt, "image_bytes": image_bytes, "media_type": media_type})
+    async def plan_cutaway(self, *, prompt: str, images: list[tuple[bytes, str]]) -> str:
+        self.plans.append({"prompt": prompt, "images": _recorded(images)})
+        return f"3D屋剖面：{prompt}"
+
+    async def generate(self, *, prompt: str, images: list[tuple[bytes, str]]) -> tuple[bytes, str]:
+        self.calls.append({"prompt": prompt, "images": _recorded(images)})
         return OPTIMIZED, "image/png"
 
 
@@ -89,6 +99,9 @@ def _settings(tmp_path: Path) -> Settings:
     return Settings(
         api_key="test-key",
         openrouter_api_key="test-or-key",
+        deepseek_api_key="test-ds-key",
+        deepseek_model="deepseek-flash",
+        deepseek_base_url="https://api.deepseek.com",
         base_url="https://api.aholo3d.cn",
         region="cn",
         cors_origins=["http://localhost:5173"],
@@ -149,13 +162,19 @@ def test_upload_saves_reference_then_downloads_model(tmp_path: Path):
 
     assert body["status"] == "succeeded"
     assert body["artifacts"]["image_url"] == "https://cdn.example/optimized.png"
-    assert images.calls == [
+    assert images.plans == [
         {
             "prompt": "一把浅色原木餐椅\n风格：cartoon",
-            "image_bytes": PNG,
-            "media_type": "image/png",
+            "images": [{"image_bytes": PNG, "media_type": "image/png"}],
         }
     ]
+    assert images.calls == [
+        {
+            "prompt": "3D屋剖面：一把浅色原木餐椅\n风格：cartoon",
+            "images": [{"image_bytes": PNG, "media_type": "image/png"}],
+        }
+    ]
+    assert body["artifacts"]["image_prompt"] == "3D屋剖面：一把浅色原木餐椅\n风格：cartoon"
     assert fake.created == [
         {"img": "https://cdn.example/optimized.png", "version": "G1", "outputFormat": ["glb"]}
     ]
@@ -174,7 +193,8 @@ def test_upload_saves_reference_then_downloads_model(tmp_path: Path):
     assert stl.content == b"stl"
     assert reference.content == PNG
     assert optimized.content == OPTIMIZED
-    assert body["nodes"][2]["label"] == "优化参考图"
+    assert body["nodes"][2]["label"] == "整理剖面说明"
+    assert body["nodes"][3]["label"] == "优化参考图"
     assert isinstance(body["artifacts"]["poll_mesh_elapsed_seconds"], int)
     assert body["artifacts"]["poll_mesh_started_at"]
     assert isinstance(body["artifacts"]["optimize_image_elapsed_seconds"], int)
@@ -183,6 +203,46 @@ def test_upload_saves_reference_then_downloads_model(tmp_path: Path):
     assert listed[0]["run_id"] == run_id
     assert listed[0]["prompt"] == "一把浅色原木餐椅"
     assert listed[0]["reference_image"].endswith("/reference.png")
+
+
+def test_multiple_reference_images_are_kept_and_sent(tmp_path: Path):
+    fake = FakeLux3D()
+    images = FakeImages()
+    with _client(tmp_path, fake, images) as client:
+        created = client.post(
+            "/api/v1/runs",
+            data={"workflow_id": "img-to-3d", "prompt": "同一间房"},
+            files=[
+                ("image", ("pano.png", PNG, "image/png")),
+                ("image", ("planet.jpg", JPG, "image/jpeg")),
+            ],
+        )
+        assert created.status_code == 202
+        body = client.get(f"/api/v1/runs/{created.json()['run_id']}").json()
+        second = client.get(body["outputs"]["reference_images"][1])
+    assert body["status"] == "succeeded"
+    assert body["outputs"]["reference_image"].endswith("/reference-1.png")
+    assert [item.rsplit("/", 1)[-1] for item in body["outputs"]["reference_images"]] == [
+        "reference-1.png",
+        "reference-2.jpg",
+    ]
+    sent = [{"image_bytes": PNG, "media_type": "image/png"}, {"image_bytes": JPG, "media_type": "image/jpeg"}]
+    assert images.plans[0]["images"] == sent
+    assert images.calls[0]["images"] == sent
+    assert second.content == JPG
+    run_dir = tmp_path / "runs" / body["run_id"]
+    assert (run_dir / "reference-1.png").read_bytes() == PNG
+    assert (run_dir / "reference-2.jpg").read_bytes() == JPG
+
+
+def test_too_many_reference_images_rejected(tmp_path: Path):
+    with _client(tmp_path, FakeLux3D(), FakeImages()) as client:
+        created = client.post(
+            "/api/v1/runs",
+            data={"workflow_id": "img-to-3d", "prompt": "房间"},
+            files=[("image", (f"{index}.png", PNG, "image/png")) for index in range(9)],
+        )
+    assert created.status_code == 422
 
 
 def test_upload_failure_stops_before_create(tmp_path: Path):
@@ -197,8 +257,8 @@ def test_upload_failure_stops_before_create(tmp_path: Path):
         body = client.get(f"/api/v1/runs/{created.json()['run_id']}").json()
     assert body["status"] == "failed"
     assert body["error"]["code"] == "UPLOAD_FAILED"
-    assert body["nodes"][2]["status"] == "succeeded"
-    assert body["nodes"][3]["status"] == "failed"
+    assert body["nodes"][3]["status"] == "succeeded"
+    assert body["nodes"][4]["status"] == "failed"
     assert body["outputs"]["optimized_image"].endswith("/optimized.png")
     assert body["outputs"]["model_glb"] is None
     assert fake.created == []
@@ -258,14 +318,21 @@ def test_confirm_mode_waits_for_mesh_decision(tmp_path: Path):
         assert created.status_code == 202
         run_id = created.json()["run_id"]
         paused = client.get(f"/api/v1/runs/{run_id}").json()
-        assert paused["status"] == "awaiting_mesh"
-        assert paused["outputs"]["optimized_image"].endswith("/optimized.png")
+        assert paused["status"] == "awaiting_image"
+        assert paused["artifacts"]["image_prompt"] == "3D屋剖面：一间空房间"
+        assert paused["outputs"]["optimized_image"] is None
         assert paused["outputs"]["model_glb"] is None
-        assert paused["nodes"][2]["status"] == "succeeded"
-        assert paused["nodes"][3]["status"] == "pending"
         assert fake.created == []
-        refused = client.post("/api/v1/runs/missing/mesh")
+        refused = client.post("/api/v1/runs/missing/image", json={"prompt": "改过的说明"})
         assert refused.status_code == 404
+        pictured = client.post(f"/api/v1/runs/{run_id}/image", json={"prompt": "改过的剖面说明"})
+        assert pictured.status_code == 202
+        ready = client.get(f"/api/v1/runs/{run_id}").json()
+        assert ready["status"] == "awaiting_mesh"
+        assert ready["artifacts"]["image_prompt"] == "改过的剖面说明"
+        assert ready["outputs"]["optimized_image"].endswith("/optimized.png")
+        early = client.post(f"/api/v1/runs/{run_id}/image", json={"prompt": "再改"})
+        assert early.status_code == 409
         continued = client.post(f"/api/v1/runs/{run_id}/mesh")
         assert continued.status_code == 202
         done = client.get(f"/api/v1/runs/{run_id}").json()
@@ -276,6 +343,14 @@ def test_confirm_mode_waits_for_mesh_decision(tmp_path: Path):
         ]
         again = client.post(f"/api/v1/runs/{run_id}/mesh")
         assert again.status_code == 409
+
+
+def test_awaiting_image_survives_restart(tmp_path: Path):
+    root = tmp_path / "runs"
+    record = new_record("brief", prompt="房间", style=None, image_url=None, mode="confirm")
+    record["status"] = "awaiting_image"
+    RunStore(root).create(record)
+    assert RunStore(root).get("brief")["status"] == "awaiting_image"
 
 
 def test_awaiting_mesh_survives_restart(tmp_path: Path):
@@ -351,6 +426,9 @@ def test_openrouter_sends_reference_image():
         settings = Settings(
             api_key="test-key",
             openrouter_api_key="test-or-key",
+            deepseek_api_key="test-ds-key",
+            deepseek_model="deepseek-flash",
+            deepseek_base_url="https://api.deepseek.com",
             base_url="https://api.aholo3d.cn",
             region="cn",
             cors_origins=[],
@@ -361,7 +439,7 @@ def test_openrouter_sends_reference_image():
         transport = httpx.MockTransport(handler)
         async with httpx.AsyncClient(transport=transport) as http:
             raw, media = await OpenRouterClient(http, settings).generate(
-                prompt="椅子", image_bytes=PNG, media_type="image/png"
+                prompt="椅子", images=[(PNG, "image/png"), (JPG, "image/jpeg")]
             )
         assert raw == OPTIMIZED
         assert media == "image/png"
@@ -372,5 +450,34 @@ def test_openrouter_sends_reference_image():
     assert seen["json"]["prompt"] == "椅子"
     assert seen["json"]["resolution"] == "1K"
     assert seen["json"]["aspect_ratio"] == "16:9"
-    reference = seen["json"]["input_references"][0]["image_url"]["url"]
-    assert reference == "data:image/png;base64," + base64.b64encode(PNG).decode("ascii")
+    references = seen["json"]["input_references"]
+    assert references[0]["image_url"]["url"] == "data:image/png;base64," + base64.b64encode(PNG).decode("ascii")
+    assert references[1]["image_url"]["url"] == "data:image/jpeg;base64," + base64.b64encode(JPG).decode("ascii")
+
+
+def test_cutaway_prompt_goes_to_deepseek():
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        seen["json"] = json.loads(request.content)
+        seen["auth"] = request.headers["authorization"]
+        return httpx.Response(200, json={"choices": [{"message": {"content": "一间房的剖面"}}]})
+
+    async def run() -> None:
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as http:
+            text = await OpenRouterClient(http, _settings(Path("."))).plan_cutaway(
+                prompt="只要一个房间", images=[(PNG, "image/png"), (JPG, "image/jpeg")]
+            )
+        assert text == "一间房的剖面"
+
+    asyncio.run(run())
+    assert seen["url"] == "https://api.deepseek.com/chat/completions"
+    assert seen["auth"] == "Bearer test-ds-key"
+    assert seen["json"]["model"] == "deepseek-flash"
+    assert seen["json"]["messages"][0]["content"][0]["text"] == "只要一个房间"
+    content = seen["json"]["messages"][0]["content"]
+    assert content[1]["type"] == "image_url"
+    assert content[1]["image_url"]["url"].startswith("data:image/png;base64,")
+    assert content[2]["image_url"]["url"].startswith("data:image/jpeg;base64,")

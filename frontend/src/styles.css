@@ -283,6 +283,52 @@ textarea {
   text-overflow: ellipsis;
 }
 
+.file-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.file-chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  min-height: 44px;
+  padding: 0 4px 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper);
+}
+
+.file-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-chip button {
+  min-width: 44px;
+  min-height: 44px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.file-chip button:hover:not(:disabled) {
+  background: var(--row);
+}
+
+.file-chip button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
 textarea {
   min-height: 8.5rem;
   resize: vertical;
@@ -553,6 +599,33 @@ textarea:focus-visible {
   border-radius: 16px;
 }
 
+.prompt-review {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.prompt-review-copy {
+  display: grid;
+  gap: 2px;
+}
+
+.prompt-review-copy h2 {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.prompt-review-copy p {
+  margin: 0;
+  color: var(--quiet);
+  font-size: 0.875rem;
+}
+
+.prompt-review .submit {
+  margin: 0;
+}
+
 .image-panel img,
 .image-panel .muted {
   border-radius: 10px;
@@ -564,6 +637,16 @@ textarea:focus-visible {
   height: 240px;
   object-fit: contain;
   background: var(--bay);
+}
+
+.image-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+}
+
+.image-strip img {
+  height: 180px;
 }
 
 .image-panel .muted {

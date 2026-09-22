@@ -19,6 +19,9 @@ def _load_dotenv() -> None:
 class Settings:
     api_key: str
     openrouter_api_key: str
+    deepseek_api_key: str
+    deepseek_model: str
+    deepseek_base_url: str
     base_url: str
     region: str
     cors_origins: list[str]
@@ -46,6 +49,9 @@ def load_settings() -> Settings:
     return Settings(
         api_key=os.environ.get("LUX3D_API_KEY", "").strip(),
         openrouter_api_key=os.environ.get("OPENROUTER_API_KEY", "").strip(),
+        deepseek_api_key=os.environ.get("DEEPSEEK_API_KEY", "").strip(),
+        deepseek_model=os.environ.get("DEEPSEEK_MODEL", "deepseek-flash").strip() or "deepseek-flash",
+        deepseek_base_url=os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/"),
         base_url=base_url,
         region=region,
         cors_origins=origins,

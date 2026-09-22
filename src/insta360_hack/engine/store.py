@@ -24,6 +24,7 @@ def new_record(
         "artifacts": {},
         "outputs": {
             "reference_image": None,
+            "reference_images": None,
             "optimized_image": None,
             "model_glb": None,
             "model_stl": None,

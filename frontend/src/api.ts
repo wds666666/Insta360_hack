@@ -9,17 +9,30 @@ export async function listRuns(): Promise<RunSummary[]> {
   return body.runs;
 }
 
-export async function createRun(prompt: string, image: File, mode: RunMode): Promise<{ run_id: string }> {
+export async function createRun(prompt: string, images: File[], mode: RunMode): Promise<{ run_id: string }> {
   const body = new FormData();
   body.set("workflow_id", "img-to-3d");
   body.set("prompt", prompt);
-  body.set("image", image);
+  for (const image of images) {
+    body.append("image", image);
+  }
   body.set("mode", mode);
   const response = await fetch("/api/v1/runs", { method: "POST", body });
   if (!response.ok) {
     throw new Error(await readError(response));
   }
   return response.json();
+}
+
+export async function continueImage(runId: string, prompt: string): Promise<void> {
+  const response = await fetch(`/api/v1/runs/${runId}/image`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt }),
+  });
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
 }
 
 export async function continueMesh(runId: string): Promise<void> {

@@ -32,30 +32,60 @@ function namePasted(file: File): File {
   return new File([file], `已粘贴的全景.${ext}`, { type: file.type || "image/png" });
 }
 
+const MAX_REFERENCES = 8;
+
+const DEFAULT_BRIEF = `你在看同一间房的参考图，可能是一张全景，也可能还有行星图或其他角度。请只写一段给图像模型的中文提示词，不要解释。
+画面必须是这一间房的 3D 屋剖面：斜俯视等距视角，只选一个最能看清内部的角度，墙被切开，里面的空间一眼能读懂。不要把不同视角画成好几间房。
+严格依据照片里真实的墙、地面、门窗和主要家具，不要另造房间。
+最后这张图会交给 Lux3D 做成可打印的模型。家具画成贴地的粗实心块。去掉床品褶皱、灯线、画框、植物、门把手和细桌腿，细过一根手指的东西不要出现。表面平整，少纹理。`;
+
 type Props = {
   disabled: boolean;
-  onImage: (file: File | null) => void;
-  onSubmit: (prompt: string, image: File, mode: "auto" | "confirm") => void;
+  onImages: (files: File[]) => void;
+  onSubmit: (prompt: string, images: File[], mode: "auto" | "confirm") => void;
 };
 
-export function PromptForm({ disabled, onImage, onSubmit }: Props) {
+export function PromptForm({ disabled, onImages, onSubmit }: Props) {
   const input = useRef<HTMLInputElement>(null);
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
+  const filesRef = useRef(files);
+  filesRef.current = files;
   const [dragging, setDragging] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
-  const [mode, setMode] = useState<"auto" | "confirm">("auto");
+  const [mode, setMode] = useState<"auto" | "confirm">("confirm");
 
-  const onImageRef = useRef(onImage);
-  onImageRef.current = onImage;
+  const onImagesRef = useRef(onImages);
+  onImagesRef.current = onImages;
 
-  function choose(next: File | null) {
-    if (next && !isPanorama(next)) {
-      setFormError("全景只支持 jpg、png、webp");
+  function add(incoming: File[]) {
+    if (!incoming.length) {
       return;
     }
+    const accepted = incoming.filter((file) => isPanorama(file));
+    if (!accepted.length) {
+      setFormError("参考图只支持 jpg、png、webp");
+      return;
+    }
+    const room = MAX_REFERENCES - filesRef.current.length;
+    const next = [...filesRef.current, ...accepted.slice(0, Math.max(room, 0))];
+    if (accepted.length < incoming.length) {
+      setFormError("参考图只支持 jpg、png、webp");
+    } else if (accepted.length > room) {
+      setFormError(`参考图最多 ${MAX_REFERENCES} 张`);
+    } else {
+      setFormError(null);
+    }
+    filesRef.current = next;
+    setFiles(next);
+    onImagesRef.current(next);
+  }
+
+  function remove(index: number) {
+    const next = filesRef.current.filter((_, item) => item !== index);
+    filesRef.current = next;
     setFormError(null);
-    setFile(next);
-    onImageRef.current(next);
+    setFiles(next);
+    onImagesRef.current(next);
   }
 
   useEffect(() => {
@@ -68,7 +98,7 @@ export function PromptForm({ disabled, onImage, onSubmit }: Props) {
         return;
       }
       event.preventDefault();
-      choose(image);
+      add(image ? [image] : []);
     };
     window.addEventListener("paste", onPaste);
     return () => window.removeEventListener("paste", onPaste);
@@ -81,8 +111,8 @@ export function PromptForm({ disabled, onImage, onSubmit }: Props) {
         event.preventDefault();
         const data = new FormData(event.currentTarget);
         const prompt = String(data.get("prompt") ?? "").trim();
-        if (!file) {
-          setFormError("先选择一张全景");
+        if (!files.length) {
+          setFormError("先放入至少一张参考图");
           return;
         }
         if (!prompt) {
@@ -90,11 +120,11 @@ export function PromptForm({ disabled, onImage, onSubmit }: Props) {
           return;
         }
         setFormError(null);
-        onSubmit(prompt, file, mode);
+        onSubmit(prompt, files, mode);
       }}
     >
       <div className="field">
-        <span id="panorama-label">全景图</span>
+        <span id="panorama-label">参考图</span>
         <div
           className={dragging ? "file-pick is-drag" : "file-pick"}
           onDragOver={(event) => {
@@ -110,7 +140,7 @@ export function PromptForm({ disabled, onImage, onSubmit }: Props) {
             if (disabled) {
               return;
             }
-            choose(event.dataTransfer.files[0] ?? null);
+            add(Array.from(event.dataTransfer.files));
           }}
         >
           <input
@@ -119,10 +149,11 @@ export function PromptForm({ disabled, onImage, onSubmit }: Props) {
             name="image"
             type="file"
             accept="image/jpeg,image/png,image/webp"
+            multiple
             disabled={disabled}
             aria-labelledby="panorama-label"
             onChange={(event) => {
-              choose(event.currentTarget.files?.[0] ?? null);
+              add(Array.from(event.currentTarget.files ?? []));
               event.currentTarget.value = "";
             }}
           />
@@ -132,16 +163,41 @@ export function PromptForm({ disabled, onImage, onSubmit }: Props) {
             disabled={disabled}
             onClick={() => input.current?.click()}
           >
-            {file ? "更换全景" : "选择全景"}
+            {files.length ? "再加参考图" : "选择参考图"}
           </button>
-          <span className={file ? "file-name is-set" : "file-name"}>
-            {file ? file.name : "拖到这里，或按 Ctrl+V / ⌘V 粘贴"}
+          <span className={files.length ? "file-name is-set" : "file-name"}>
+            {files.length
+              ? `已选 ${files.length} 张`
+              : "全景、行星或其他视角。可多选，也可拖入或粘贴"}
           </span>
+          {files.length ? (
+            <ul className="file-list">
+              {files.map((item, index) => (
+                <li className="file-chip" key={`${item.name}-${item.size}-${item.lastModified}-${index}`}>
+                  <span>{item.name}</span>
+                  <button type="button" disabled={disabled} onClick={() => remove(index)} aria-label={`移除${item.name}`}>
+                    移除
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
         </div>
       </div>
       <div className="mode" role="radiogroup" aria-label="生成方式">
         <span className="mode-label">生成方式</span>
         <div className="mode-options">
+          <button
+            className={mode === "confirm" ? "mode-option is-selected" : "mode-option"}
+            type="button"
+            role="radio"
+            aria-checked={mode === "confirm"}
+            disabled={disabled}
+            onClick={() => setMode("confirm")}
+          >
+            <strong>分步确认</strong>
+            <span>先看剖面说明，再决定出图和做模型</span>
+          </button>
           <button
             className={mode === "auto" ? "mode-option is-selected" : "mode-option"}
             type="button"
@@ -153,26 +209,15 @@ export function PromptForm({ disabled, onImage, onSubmit }: Props) {
             <strong>全自动</strong>
             <span>提交后直接生成模型</span>
           </button>
-          <button
-            className={mode === "confirm" ? "mode-option is-selected" : "mode-option"}
-            type="button"
-            role="radio"
-            aria-checked={mode === "confirm"}
-            disabled={disabled}
-            onClick={() => setMode("confirm")}
-          >
-            <strong>先看优化图</strong>
-            <span>确认后再做模型</span>
-          </button>
         </div>
       </div>
       <label className="field">
-        <span>空间说明</span>
+        <span>给 DeepSeek 的说明</span>
         <textarea
           name="prompt"
           disabled={disabled}
-          rows={7}
-          placeholder="写下要摸到的墙、地面和家具。人物、灯具和文字不要留。"
+          rows={8}
+          defaultValue={DEFAULT_BRIEF}
         />
       </label>
       {formError ? (

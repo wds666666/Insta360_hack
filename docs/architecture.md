@@ -6,7 +6,7 @@
 ## 1. 系统是什么
 
 前端负责上传参考图、填写提示词、看进度、读取并显示原图、优化图和 3D 模型。  
-后端是手写的直线工作流，用 FastAPI 暴露。用户提示词和参考图先交给 OpenRouter 的 `google/gemini-3.1-flash-image` 生成优化图，再把这张图交给 Lux3D **图生 3D**。提示词不传给 Lux3D。
+后端是手写的直线工作流，用 FastAPI 暴露。用户提示词和全部参考图先交给 DeepSeek `deepseek-flash`（V4.1-Flash，能看图），写成一段 3D 屋剖面说明，再连同这些参考图交给 OpenRouter 的 `google/gemini-3.1-flash-image` 生成一张优化图，然后把这张图交给 Lux3D **图生 3D**。提示词不传给 Lux3D。
 
 ```
 浏览器
@@ -18,9 +18,11 @@ FastAPI
   GET  /api/v1/runs          列出 data/runs 里已有的任务，新的在前
   GET  /api/v1/runs/{id}     轮询状态；outputs 里已完成的图随时可读
   GET  /api/v1/runs/{id}/files/{name}   读原图、优化图和模型
+  POST /api/v1/runs/{id}/image   确认剖面说明后出图
+  POST /api/v1/runs/{id}/mesh    确认优化图后做网格
         │
         ▼
-validate → save_image → optimize_image → upload_image → create_img_to_3d
+validate → save_image → plan_cutaway → optimize_image → upload_image → create_img_to_3d
         → poll_mesh → export_stl → poll_stl → download_model
         │
         ▼
@@ -39,7 +41,7 @@ Lux3D 的 `img` 必须是它能访问的 URL。本地文件不能直接当 `img`
 输入是固定的参考图 + 提示词，节点顺序固定。理解图文并改图的是 Gemini，把优化图做成网格的是 Lux3D 图生 3D。
 
 - 不引入 Agno、LangGraph、Prefect、Temporal。
-- 提示词只交给图像模型，用来优化参考图。图生 3D 不收 prompt。
+- 第一级说明和全景交给 DeepSeek。它写的剖面说明再交给 Gemini。图生 3D 不收 prompt。
 
 以后再换执行器，节点函数保持不变：
 
@@ -84,13 +86,18 @@ Lux3D 的 `img` 必须是它能访问的 URL。本地文件不能直接当 `img`
 
 ```text
 img-to-3d:
-  validate           prompt 非空；参考图是文件或 image_url，二选一；style 若有则必须在枚举内
-  save_image         上传的文件写入 data/runs/{id}/reference.{jpg|png|webp}
-                     若是 image_url，先下载一份到同一路径，供前端显示
-                     写完立刻填 outputs.reference_image
-  optimize_image     参考图 + prompt（style 若有则拼进提示词）交给 Gemini
+  validate           prompt 非空；参考图是文件或 image_url，二选一；文件最多 8 张；style 若有则必须在枚举内
+  save_image         一张图写入 data/runs/{id}/reference.{jpg|png|webp}
+                     多张图写入 reference-1、reference-2……
+                     若是 image_url，先下载一份到 reference.*，供前端显示
+                     写完立刻填 outputs.reference_image（第一张）和 outputs.reference_images
+  plan_cutaway       用户提交的第一级说明和全部参考图交给 DeepSeek
+                     写成的剖面说明留在 artifacts.image_prompt
+                     mode=confirm 时停在 awaiting_image，不出图
+  optimize_image     只按 image_prompt 和全部参考图交给 Gemini
                      结果写入 data/runs/{id}/optimized.{png|jpg|webp}
-                     写完立刻填 outputs.optimized_image，此时 3D 还没开始
+                     写完立刻填 outputs.optimized_image
+                     mode=confirm 时停在 awaiting_mesh，此时还没有模型
   upload_image       上传优化图，得到 artifacts.image_url。不把用户原图交给 Lux3D
   create_img_to_3d   POST img-to-3d，version 固定 G1，outputFormat 只传 glb，不传 prompt、ply
   poll_mesh          轮询网格任务。日志带状态含义和已等待时间，整段超时默认 2400 秒
@@ -103,7 +110,7 @@ img-to-3d:
 
 ## 6. 运行与文件
 
-run 状态：`pending → running → succeeded | failed`。`mode=confirm` 时优化图完成后停在 `awaiting_mesh`，确认后再回到 `running`。  
+run 状态：`pending → running → succeeded | failed`。`mode=confirm` 时剖面说明写完停在 `awaiting_image`，优化图完成后停在 `awaiting_mesh`，确认后再回到 `running`。  
 节点状态：`pending → running → succeeded | failed | skipped`。  
 Lux3D 任务状态单独放在 `artifacts.lux3d_status`，并带 `lux3d_status_label`：`0` 初始化，`1` 运行中，`3` 成功，`4` 失败，`6` 已取消。产物只要网格，不保存高斯 PLY。
 
@@ -129,11 +136,11 @@ Base：`/api/v1`。CORS 来源读 `CORS_ORIGINS`。
 | 字段 | 必填 | 说明 |
 |------|------|------|
 | `workflow_id` | 是 | 只接受 `img-to-3d` |
-| `prompt` | 是 | 交给 Gemini 优化参考图，不传给 Lux3D |
-| `image` | 与 `image_url` 二选一 | 参考图，jpg / png / webp，最大 20MB |
+| `prompt` | 是 | 交给 DeepSeek 的第一级说明，原文发送，不传给 Lux3D |
+| `image` | 与 `image_url` 二选一 | 参考图，可重复上传，最多 8 张。同一间房的全景、行星图或其他视角。jpg / png / webp，每张最大 20MB |
 | `image_url` | 与 `image` 二选一 | 已是公网 URL，仍会先下载再优化 |
-| `style` | 否 | `photorealistic` `cartoon` `anime` `hand_painted` `cyberpunk` `fantasy` `glass`，拼进 Gemini 提示词 |
-| `mode` | 否 | `auto`（默认）一直做到网格。`confirm` 在优化图写入后停在 `awaiting_mesh`，等 `POST /api/v1/runs/{id}/mesh` 再继续 |
+| `style` | 否 | `photorealistic` `cartoon` `anime` `hand_painted` `cyberpunk` `fantasy` `glass`。有值时拼进交给 DeepSeek 的说明 |
+| `mode` | 否 | `auto` 一直做到网格。`confirm` 在剖面说明后停在 `awaiting_image`，出图后再停在 `awaiting_mesh` |
 
 缺字段、两个图都传、类型不对：`422`，不创建 run。成功 `202`：
 
@@ -203,11 +210,19 @@ Base：`/api/v1`。CORS 来源读 `CORS_ORIGINS`。
 
 未知 run：`404`。失败时 `error` 为 `{ "code", "message" }`，已创建的 `lux3d_task_id` 保留。
 
+### 确认后继续
+
+`POST /api/v1/runs/{run_id}/image`，JSON `{ "prompt": "..." }`。只在 `awaiting_image` 时可用，否则 `409`。`prompt` 非空就覆盖 `artifacts.image_prompt`，然后从 `optimize_image` 继续。成功 `202`。
+
+`POST /api/v1/runs/{run_id}/mesh`。只在 `awaiting_mesh` 时可用，否则 `409`。从 `upload_image` 继续。成功 `202`。
+
+`awaiting_image` 和 `awaiting_mesh` 在服务重启后保持原状态，不标成中断。
+
 ### 读文件
 
 `GET /api/v1/runs/{run_id}/files/{name}`
 
-只允许该 run 目录下的 `reference.jpg|png|webp`、`optimized.jpg|png|webp`、`model.glb`、`model.stl`。前端显示优化图用 `outputs.optimized_image`，显示模型用 `outputs.model_glb`。
+只允许该 run 目录下的 `reference.jpg|png|webp`、`reference-N.jpg|png|webp`、`optimized.jpg|png|webp`、`model.glb`、`model.stl`。前端显示优化图用 `outputs.optimized_image`，显示模型用 `outputs.model_glb`。多张原图用 `outputs.reference_images`，任务列表缩略图仍用第一张 `reference_image`。
 
 ## 8. Lux3D 约定
 
@@ -245,8 +260,8 @@ src/insta360_hack/
   cli.py
   api/runs.py
   engine/          runner、store、错误
-  nodes/           校验、存图、优化、上传、图生 3D、轮询、导出、下载
-  openrouter/      Gemini 图像优化
+  nodes/           校验、存图、剖面说明、优化、上传、图生 3D、轮询、导出、下载
+  openrouter/      DeepSeek 看图写说明，Gemini 出图
   lux3d/           client 与 G1 槽位解析
 data/runs/         gitignore，含 reference、optimized、model.glb、model.stl
 frontend/            触见页面，见 frontend/README.md
@@ -263,6 +278,9 @@ scripts/dev.sh       同时启动后端和前端
 |------|------|
 | `LUX3D_API_KEY` | 必填 |
 | `OPENROUTER_API_KEY` | 必填，只用于 Gemini 图像优化 |
+| `DEEPSEEK_API_KEY` | 必填，看图并写成 3D 屋剖面说明 |
+| `DEEPSEEK_MODEL` | 默认 `deepseek-flash`，即 V4.1-Flash |
+| `DEEPSEEK_BASE_URL` | 默认 `https://api.deepseek.com` |
 | `LUX3D_REGION` | `cn`（默认）或 `global` |
 | `LUX3D_BASE_URL` | 可选，覆盖区域默认 Host |
 | `CORS_ORIGINS` | 逗号分隔，默认 `http://localhost:5173` |

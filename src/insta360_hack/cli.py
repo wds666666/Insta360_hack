@@ -18,7 +18,7 @@ from insta360_hack.openrouter.client import OpenRouterClient
 def main() -> None:
     parser = argparse.ArgumentParser(description="本地跑图生 3D 工作流")
     parser.add_argument("--prompt")
-    parser.add_argument("--image", type=Path)
+    parser.add_argument("--image", type=Path, action="append", default=[], help="参考图，可重复。全景、行星或其他视角")
     parser.add_argument("--image-url")
     parser.add_argument("--style")
     parser.add_argument("--resume", help="继续轮询已创建的 run_id，不再次提交任务")
@@ -35,21 +35,19 @@ async def _run(args: argparse.Namespace) -> int:
         raise SystemExit("参考图文件和 --image-url 需要二选一")
     settings = load_settings()
     store = RunStore(settings.data_dir / "runs")
-    image_bytes = None
-    image_suffix = None
     image_url = args.image_url
+    reference_images = []
     if args.image:
-        image_bytes = args.image.read_bytes()
-        image_suffix = suffix_from_name(args.image.name)
         image_url = None
+        for path in args.image:
+            reference_images.append((path.read_bytes(), suffix_from_name(path.name)))
     record = new_record(uuid.uuid4().hex, prompt=args.prompt, style=args.style, image_url=image_url)
     store.create(record)
     print(f"run_id={record['run_id']}", flush=True)
     async with httpx.AsyncClient(timeout=120, follow_redirects=True) as http:
         ctx = make_context(
             record,
-            image_bytes=image_bytes,
-            image_suffix=image_suffix,
+            reference_images=reference_images,
             client=Lux3DClient(http, settings),
             images=OpenRouterClient(http, settings),
             settings=settings,

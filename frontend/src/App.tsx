@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { continueMesh, createRun, getRun, listRuns } from "./api";
+import { continueImage, continueMesh, createRun, getRun, listRuns } from "./api";
 import { GlbViewer } from "./components/GlbViewer";
 import { ImagePanel } from "./components/ImagePanel";
 import { PromptForm } from "./components/PromptForm";
@@ -36,7 +36,7 @@ export function App() {
   const [run, setRun] = useState<RunRecord | null>(null);
   const [tasks, setTasks] = useState<RunSummary[]>([]);
   const [listError, setListError] = useState<string | null>(null);
-  const [preview, setPreview] = useState<string | null>(null);
+  const [preview, setPreview] = useState<string[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [pollEpoch, setPollEpoch] = useState(0);
@@ -101,7 +101,11 @@ export function App() {
             restored.current = true;
             const saved = rememberedRun();
             const active = next.find(
-              (task) => task.status === "pending" || task.status === "running" || task.status === "awaiting_mesh",
+              (task) =>
+                task.status === "pending" ||
+                task.status === "running" ||
+                task.status === "awaiting_image" ||
+                task.status === "awaiting_mesh",
             );
             const known = saved && next.some((task) => task.run_id === saved) ? saved : null;
             const resume = known || active?.run_id || null;
@@ -127,8 +131,8 @@ export function App() {
 
   useEffect(() => {
     return () => {
-      if (preview) {
-        URL.revokeObjectURL(preview);
+      for (const url of preview) {
+        URL.revokeObjectURL(url);
       }
     };
   }, [preview]);
@@ -153,20 +157,20 @@ export function App() {
             selectedId={runId}
             error={listError}
             onSelect={(id) => {
-              if (preview) {
-                URL.revokeObjectURL(preview);
-                setPreview(null);
+              for (const url of preview) {
+                URL.revokeObjectURL(url);
               }
+              setPreview([]);
               setNotice(null);
               setRun(null);
               setRunId(id);
               writeRunUrl(id);
             }}
             onCreate={() => {
-              if (preview) {
-                URL.revokeObjectURL(preview);
-                setPreview(null);
+              for (const url of preview) {
+                URL.revokeObjectURL(url);
               }
+              setPreview([]);
               setNotice(null);
               setRun(null);
               setRunId(null);
@@ -175,19 +179,19 @@ export function App() {
           />
           <PromptForm
             disabled={running || busy || submitting}
-            onImage={(file) => {
+            onImages={(files) => {
               setPreview((current) => {
-                if (current) {
-                  URL.revokeObjectURL(current);
+                for (const url of current) {
+                  URL.revokeObjectURL(url);
                 }
-                return file ? URL.createObjectURL(file) : null;
+                return files.map((file) => URL.createObjectURL(file));
               });
             }}
-            onSubmit={(prompt, image, mode) => {
+            onSubmit={(prompt, images, mode) => {
               setNotice(null);
               setRun(null);
               setSubmitting(true);
-              void createRun(prompt, image, mode)
+              void createRun(prompt, images, mode)
                 .then((created) => {
                   setRunId(created.run_id);
                   writeRunUrl(created.run_id);
@@ -212,16 +216,75 @@ export function App() {
           <div className="images">
             <ImagePanel
               title="全景原图"
-              note="拍摄到的视觉空间"
-              src={preview ?? run?.outputs.reference_image ?? null}
-              empty="放入全景后，原始空间显示在这里"
+              note="拍摄到的视觉空间。多张图是同一间房的不同视角"
+              srcs={
+                preview.length
+                  ? preview
+                  : run?.outputs.reference_images?.length
+                    ? run.outputs.reference_images
+                    : run?.outputs.reference_image
+                      ? [run.outputs.reference_image]
+                      : []
+              }
+              empty="放入全景或行星图后，原始空间显示在这里"
             />
-            <ImagePanel
-              title="空间结构"
-              note={optimizeNote}
-              src={run?.outputs.optimized_image ?? null}
-              empty="优化完成后，空间结构显示在这里"
-            />
+            {run?.status === "awaiting_image" ? (
+              <form
+                className="image-panel prompt-review"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (!runId) {
+                    return;
+                  }
+                  const prompt = String(new FormData(event.currentTarget).get("prompt") ?? "").trim();
+                  if (!prompt) {
+                    setNotice("剖面说明不能是空的");
+                    return;
+                  }
+                  setNotice(null);
+                  setSubmitting(true);
+                  void continueImage(runId, prompt)
+                    .then(() => {
+                      setRun((current) =>
+                        current
+                          ? {
+                              ...current,
+                              status: "running",
+                              artifacts: { ...current.artifacts, image_prompt: prompt },
+                            }
+                          : current,
+                      );
+                      setPollEpoch((value) => value + 1);
+                    })
+                    .catch((error: unknown) => {
+                      setSubmitting(false);
+                      setNotice(error instanceof Error ? error.message : "没能开始生成空间结构");
+                    });
+                }}
+              >
+                <div className="prompt-review-copy">
+                  <h2>空间结构</h2>
+                  <p>这是看完全景后写的剖面说明。可以改，再决定要不要出图。</p>
+                </div>
+                <textarea
+                  name="prompt"
+                  key={run.artifacts.image_prompt ?? ""}
+                  defaultValue={run.artifacts.image_prompt ?? ""}
+                  rows={8}
+                  disabled={submitting}
+                />
+                <button className="submit" type="submit" disabled={submitting}>
+                  用这段说明生成空间结构
+                </button>
+              </form>
+            ) : (
+              <ImagePanel
+                title="空间结构"
+                note={optimizeNote}
+                src={run?.outputs.optimized_image ?? null}
+                empty="优化完成后，空间结构显示在这里"
+              />
+            )}
           </div>
           <GlbViewer
             src={run?.outputs.model_glb ?? null}

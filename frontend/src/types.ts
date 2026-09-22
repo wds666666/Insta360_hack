@@ -8,12 +8,13 @@ export type RunNode = {
 
 export type RunOutputs = {
   reference_image: string | null;
+  reference_images?: string[] | null;
   optimized_image: string | null;
   model_glb: string | null;
   model_stl: string | null;
 };
 
-export type RunStatus = "pending" | "running" | "awaiting_mesh" | "succeeded" | "failed";
+export type RunStatus = "pending" | "running" | "awaiting_image" | "awaiting_mesh" | "succeeded" | "failed";
 
 export type RunMode = "auto" | "confirm";
 
@@ -41,6 +42,7 @@ export type RunRecord = {
     lux3d_elapsed_seconds?: number;
     optimize_image_started_at?: string;
     optimize_image_elapsed_seconds?: number;
+    image_prompt?: string;
     poll_mesh_started_at?: string;
     poll_mesh_elapsed_seconds?: number;
   };

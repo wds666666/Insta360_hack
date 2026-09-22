@@ -2,6 +2,7 @@ from insta360_hack.nodes.create_img_to_3d import CreateImgTo3D
 from insta360_hack.nodes.download_model import DownloadModel
 from insta360_hack.nodes.export_stl import ExportStl
 from insta360_hack.nodes.optimize_image import OptimizeImage
+from insta360_hack.nodes.plan_cutaway import PlanCutaway
 from insta360_hack.nodes.poll import PollLux3D
 from insta360_hack.nodes.save_image import SaveImage
 from insta360_hack.nodes.upload_image import UploadImage
@@ -10,6 +11,7 @@ from insta360_hack.nodes.validate import Validate
 NODES = [
     Validate(),
     SaveImage(),
+    PlanCutaway(),
     OptimizeImage(),
     UploadImage(),
     CreateImgTo3D(),

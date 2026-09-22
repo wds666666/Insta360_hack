@@ -4,6 +4,7 @@ const STATUS_LABEL: Record<string, string> = {
   pending: "等待",
   running: "进行中",
   succeeded: "完成",
+  awaiting_image: "等你确认说明",
   awaiting_mesh: "等你确认",
   failed: "失败",
 };

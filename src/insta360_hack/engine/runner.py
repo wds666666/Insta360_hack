@@ -34,6 +34,11 @@ async def run_workflow(ctx: RunContext, *, start_at: str | None = None) -> None:
             return
         record["nodes"][index]["status"] = "succeeded"
         ctx.touch()
+        if node.name == "plan_cutaway" and record["inputs"].get("mode") == "confirm":
+            record["status"] = "awaiting_image"
+            record["current_node"] = None
+            ctx.touch()
+            return
         if node.name == "optimize_image" and record["inputs"].get("mode") == "confirm":
             record["status"] = "awaiting_mesh"
             record["current_node"] = None

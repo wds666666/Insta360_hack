@@ -1,5 +1,6 @@
 from insta360_hack.engine.context import RunContext
 from insta360_hack.engine.errors import NodeError
+from insta360_hack.nodes.references import MAX_REFERENCE_IMAGES, SUFFIXES
 
 STYLES = {
     "photorealistic",
@@ -24,7 +25,12 @@ class Validate:
         if style is not None and style not in STYLES:
             raise NodeError("INVALID_INPUT", "style 不在允许列表")
         ctx.record["inputs"]["style"] = style
-        has_file = bool(ctx.image_bytes)
+        has_file = bool(ctx.reference_images)
         has_url = bool(ctx.record["inputs"].get("image_url"))
         if has_file == has_url:
             raise NodeError("INVALID_INPUT", "参考图文件和 image_url 需要二选一")
+        if len(ctx.reference_images) > MAX_REFERENCE_IMAGES:
+            raise NodeError("INVALID_INPUT", f"参考图最多 {MAX_REFERENCE_IMAGES} 张")
+        for _raw, suffix in ctx.reference_images:
+            if suffix not in SUFFIXES:
+                raise NodeError("INVALID_INPUT", "参考图只支持 jpg、png、webp")

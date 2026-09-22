@@ -9,8 +9,7 @@ from insta360_hack.engine.store import RunStore
 @dataclass
 class RunContext:
     record: dict
-    image_bytes: bytes | None
-    image_suffix: str | None
+    reference_images: list[tuple[bytes, str]]
     client: object
     images: object
     settings: Settings
@@ -27,17 +26,20 @@ class RunContext:
 def make_context(
     record: dict,
     *,
-    image_bytes: bytes | None,
-    image_suffix: str | None,
+    image_bytes: bytes | None = None,
+    image_suffix: str | None = None,
+    reference_images: list[tuple[bytes, str]] | None = None,
     client: object,
     images: object,
     settings: Settings,
     store: RunStore,
 ) -> RunContext:
+    packed = list(reference_images or [])
+    if image_bytes is not None:
+        packed.append((image_bytes, image_suffix or ""))
     return RunContext(
         record=record,
-        image_bytes=image_bytes,
-        image_suffix=image_suffix,
+        reference_images=packed,
         client=client,
         images=images,
         settings=settings,
