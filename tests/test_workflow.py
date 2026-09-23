@@ -16,6 +16,7 @@ from insta360_hack.app import create_app
 from insta360_hack.config import Settings
 from insta360_hack.engine.store import RunStore, new_record
 from insta360_hack.engine.workflows import NODE_NAMES
+from insta360_hack.insta360.service import CAPTURE_FILES, CaptureStore
 from insta360_hack.lux3d.client import Lux3DError
 from insta360_hack.lux3d.models import Lux3DTask, output_slots, parse_g1_outputs
 from insta360_hack.nodes import NODES
@@ -241,6 +242,52 @@ def test_multiple_reference_images_are_kept_and_sent(tmp_path: Path):
     run_dir = tmp_path / "runs" / body["run_id"]
     assert (run_dir / "reference-1.png").read_bytes() == PNG
     assert (run_dir / "reference-2.jpg").read_bytes() == JPG
+
+
+def test_capture_views_are_used_as_reference_images(tmp_path: Path):
+    capture_id = "b" * 32
+    captures = CaptureStore(tmp_path / "captures")
+    record = captures.create(capture_id)
+    record["status"] = "succeeded"
+    captures.save(record)
+    capture_dir = tmp_path / "captures" / capture_id
+    (capture_dir / CAPTURE_FILES["front"]).write_bytes(JPG)
+    (capture_dir / CAPTURE_FILES["right"]).write_bytes(PNG)
+
+    fake = FakeLux3D()
+    images = FakeImages()
+    with _client(tmp_path, fake, images) as client:
+        created = client.post(
+            "/api/v1/runs",
+            data={
+                "workflow_id": "img-to-3d",
+                "prompt": "同一房间的多视角",
+                "capture_id": capture_id,
+                "capture_views": '["front","right"]',
+            },
+        )
+        assert created.status_code == 202
+        body = client.get(f"/api/v1/runs/{created.json()['run_id']}").json()
+
+    assert body["status"] == "succeeded"
+    assert body["inputs"]["capture_id"] == capture_id
+    assert body["inputs"]["capture_views"] == ["front", "right"]
+    assert len(images.plans[0]["images"]) == 2
+
+
+def test_capture_input_is_mutually_exclusive_with_upload(tmp_path: Path):
+    with _client(tmp_path, FakeLux3D(), FakeImages()) as client:
+        response = client.post(
+            "/api/v1/runs",
+            data={
+                "workflow_id": "img-to-3d",
+                "prompt": "房间",
+                "capture_id": "c" * 32,
+                "capture_views": '["front"]',
+            },
+            files={"image": ("ref.png", PNG, "image/png")},
+        )
+    assert response.status_code == 422
 
 
 def test_wide_panorama_is_shrunk_for_the_model():

@@ -9,7 +9,7 @@
 ## 页面上有什么
 
 - 已有任务：打开页面就列出 `data/runs` 里的任务。点一条回到那次的原图、空间结构和模型。地址栏带 `?run=`，刷新仍停在这一条。「新任务」清空当前选择。
-- 参考图，以及给 DeepSeek 的说明。参考图可以多张，例如全景加行星图，最多 8 张。说明框打开时已填好一段 3D 屋剖面示例，可以改或清空。可以点选、多选、拖入，或按 `Ctrl+V` / `⌘V` 粘贴图片。按下「生成触觉地图」后创建一次 `img-to-3d`。有任务还在进行时不能再开新的。停在确认说明或确认出图时不算正在进行。
+- 参考图，以及给 DeepSeek 的说明。参考图可以手动上传，也可以由 X5 直接拍摄。X5 会生成 ERP、小行星和六个方向图，用户勾选后才提交；默认不选上视图。手动上传仍支持点选、多选、拖入和粘贴。两种来源都最多选择 8 张。
 - 生成方式默认分步确认。先停在剖面说明，按「用这段说明生成空间结构」才出图；图出来后再按「用这张图生成触觉模型」。全自动则提交后一直做到模型。
 - 进度列出后端返回的十个步骤。优化参考图和网格生成进行中显示「已进行」，结束后保留「用时」。
 - 全景原图：拍摄到的视觉空间。多张图并排显示。一有地址就显示，本地选中的图会先占这个位置。
@@ -34,6 +34,7 @@ frontend/
   src/components/
     TaskList.tsx      data/runs 里的任务
     PromptForm.tsx    全景和空间说明
+    X5CapturePanel.tsx X5 拍摄进度和参考图勾选
     StageList.tsx     步骤进度
     ImagePanel.tsx    原图和优化图
     GlbViewer.tsx     Three.js 视口
@@ -64,7 +65,9 @@ npm run dev --prefix frontend
 | 动作 | 接口 |
 |------|------|
 | 已有任务 | `GET /api/v1/runs` |
-| 创建 | `POST /api/v1/runs`，表单字段 `workflow_id=img-to-3d`、`prompt`、`image`、`mode`（`confirm` 或 `auto`） |
+| 开始 X5 拍摄 | `POST /api/v1/camera/captures` |
+| 查询 X5 拍摄 | `GET /api/v1/camera/captures/{capture_id}` |
+| 创建 | `POST /api/v1/runs`；手动模式传 `image`，相机模式传 `capture_id` 和 `capture_views` |
 | 确认说明后出图 | `POST /api/v1/runs/{id}/image`，JSON `{ "prompt" }`，只在 `awaiting_image` 时可用 |
 | 确认后继续做模型 | `POST /api/v1/runs/{id}/mesh`，只在 `awaiting_mesh` 时可用 |
 | 进度 | `GET /api/v1/runs/{id}` |

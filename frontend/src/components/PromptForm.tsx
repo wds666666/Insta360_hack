@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { CameraRunSource, RunSource } from "../types";
+import { X5CapturePanel } from "./X5CapturePanel";
 
 function isPanorama(file: File): boolean {
   return /^image\/(jpeg|png|webp)$/.test(file.type) || /\.(jpe?g|png|webp)$/i.test(file.name);
@@ -43,10 +45,11 @@ const DEFAULT_BRIEF = `你在看同一间房的参考图，可能是一张全景
 type Props = {
   disabled: boolean;
   onImages: (files: File[]) => void;
-  onSubmit: (prompt: string, images: File[], mode: "auto" | "confirm") => void;
+  onCameraImages: (urls: string[]) => void;
+  onSubmit: (prompt: string, source: RunSource, mode: "auto" | "confirm") => void;
 };
 
-export function PromptForm({ disabled, onImages, onSubmit }: Props) {
+export function PromptForm({ disabled, onImages, onCameraImages, onSubmit }: Props) {
   const input = useRef<HTMLInputElement>(null);
   const [files, setFiles] = useState<File[]>([]);
   const filesRef = useRef(files);
@@ -54,9 +57,37 @@ export function PromptForm({ disabled, onImages, onSubmit }: Props) {
   const [dragging, setDragging] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [mode, setMode] = useState<"auto" | "confirm">("confirm");
+  const [sourceKind, setSourceKind] = useState<"upload" | "camera">("upload");
+  const [cameraSource, setCameraSource] = useState<CameraRunSource | null>(null);
 
   const onImagesRef = useRef(onImages);
   onImagesRef.current = onImages;
+  const onCameraImagesRef = useRef(onCameraImages);
+  onCameraImagesRef.current = onCameraImages;
+
+  const handleCameraChange = useCallback(
+    (
+      selection: {
+        captureId: string;
+        candidates: { key: string; url: string }[];
+        selectedKeys: string[];
+      } | null,
+    ) => {
+      if (!selection) {
+        setCameraSource(null);
+        onCameraImagesRef.current([]);
+        return;
+      }
+      setCameraSource({
+        kind: "camera",
+        captureId: selection.captureId,
+        selectedKeys: selection.selectedKeys,
+      });
+      const selected = new Set(selection.selectedKeys);
+      onCameraImagesRef.current(selection.candidates.filter((item) => selected.has(item.key)).map((item) => item.url));
+    },
+    [],
+  );
 
   function add(incoming: File[]) {
     if (!incoming.length) {
@@ -94,6 +125,9 @@ export function PromptForm({ disabled, onImages, onSubmit }: Props) {
       return;
     }
     const onPaste = (event: ClipboardEvent) => {
+      if (sourceKind !== "upload") {
+        return;
+      }
       const image = imageFromClipboard(event.clipboardData);
       if (!image) {
         return;
@@ -103,7 +137,7 @@ export function PromptForm({ disabled, onImages, onSubmit }: Props) {
     };
     window.addEventListener("paste", onPaste);
     return () => window.removeEventListener("paste", onPaste);
-  }, [disabled]);
+  }, [disabled, sourceKind]);
 
   return (
     <form
@@ -112,8 +146,12 @@ export function PromptForm({ disabled, onImages, onSubmit }: Props) {
         event.preventDefault();
         const data = new FormData(event.currentTarget);
         const prompt = String(data.get("prompt") ?? "").trim();
-        if (!files.length) {
+        if (sourceKind === "upload" && !files.length) {
           setFormError("先放入至少一张参考图");
+          return;
+        }
+        if (sourceKind === "camera" && !cameraSource) {
+          setFormError("先用 X5 拍摄，并至少选择一张图片");
           return;
         }
         if (!prompt) {
@@ -121,9 +159,41 @@ export function PromptForm({ disabled, onImages, onSubmit }: Props) {
           return;
         }
         setFormError(null);
-        onSubmit(prompt, files, mode);
+        onSubmit(prompt, sourceKind === "upload" ? { kind: "upload", images: files } : cameraSource!, mode);
       }}
     >
+      <div className="source-switch" role="radiogroup" aria-label="参考图来源">
+        <button
+          className={sourceKind === "upload" ? "source-option is-selected" : "source-option"}
+          type="button"
+          role="radio"
+          aria-checked={sourceKind === "upload"}
+          disabled={disabled}
+          onClick={() => {
+            setSourceKind("upload");
+            setFormError(null);
+            onImagesRef.current(filesRef.current);
+          }}
+        >
+          上传参考图
+        </button>
+        <button
+          className={sourceKind === "camera" ? "source-option is-selected" : "source-option"}
+          type="button"
+          role="radio"
+          aria-checked={sourceKind === "camera"}
+          disabled={disabled}
+          onClick={() => {
+            setSourceKind("camera");
+            setCameraSource(null);
+            setFormError(null);
+            onCameraImagesRef.current([]);
+          }}
+        >
+          X5 拍摄
+        </button>
+      </div>
+      {sourceKind === "upload" ? (
       <div className="field">
         <span id="panorama-label">参考图</span>
         <div
@@ -185,6 +255,12 @@ export function PromptForm({ disabled, onImages, onSubmit }: Props) {
           ) : null}
         </div>
       </div>
+      ) : (
+        <div className="field">
+          <span>X5 候选视角</span>
+          <X5CapturePanel disabled={disabled} onChange={handleCameraChange} />
+        </div>
+      )}
       <div className="mode" role="radiogroup" aria-label="生成方式">
         <span className="mode-label">生成方式</span>
         <div className="mode-options">

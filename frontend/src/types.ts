@@ -18,6 +18,34 @@ export type RunStatus = "pending" | "running" | "awaiting_image" | "awaiting_mes
 
 export type RunMode = "auto" | "confirm";
 
+export type CaptureCandidate = {
+  key: string;
+  label: string;
+  url: string;
+  default_selected: boolean;
+};
+
+export type CaptureRecord = {
+  capture_id: string;
+  status: string;
+  step_label?: string | null;
+  candidates?: CaptureCandidate[] | Record<string, string | Partial<CaptureCandidate>> | null;
+  error?: string | { message?: string } | null;
+};
+
+export type UploadRunSource = {
+  kind: "upload";
+  images: File[];
+};
+
+export type CameraRunSource = {
+  kind: "camera";
+  captureId: string;
+  selectedKeys: string[];
+};
+
+export type RunSource = UploadRunSource | CameraRunSource;
+
 export type RunSummary = {
   run_id: string;
   status: RunStatus;

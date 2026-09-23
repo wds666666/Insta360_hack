@@ -198,28 +198,17 @@ uv run python tests/insta360sdk/projections.py \
 
 所有命令串行发送；收到上一条响应后才发送下一条。状态轮询默认间隔一秒。
 
-## 后续接入主服务
+## 主服务集成
 
-主服务只需要复用以下边界：
+正式实现已经迁到 `src/insta360_hack/insta360/`，这里的脚本只作为命令行实机验证入口。网页使用以下接口：
 
-```python
-from tests.insta360sdk.client import Insta360OSCClient
-
-with Insta360OSCClient() as camera:
-    camera.info()
-    camera.state()
-    options = camera.get_options("photoStitchingSupport", "photoStitching")
-    if "ondevice" not in options["photoStitchingSupport"]:
-        raise RuntimeError("X5 不支持机内拼接")
-
-    camera.set_options(captureMode="image", photoStitching="ondevice")
-    result = camera.wait_for_command(camera.take_picture())
-    camera.download(camera.picture_url(result), destination)
+```text
+POST /api/v1/camera/captures
+GET  /api/v1/camera/captures/{capture_id}
+GET  /api/v1/camera/captures/{capture_id}/files/{name}
 ```
 
-正式集成时建议把客户端移动到 `src/insta360_hack`，再由后端提供“拍照并返回图片”的 HTTP 接口。浏览器不直接访问相机，避免 CORS、私有网络权限和相机 Wi-Fi 路由问题。
-
-主服务接入时，建议一次拍照返回一个图片包：ERP 原图用于 360° 查看和完整场景分析，小行星图用于总览，六个透视图用于普通图片组件和多视角模型输入。
+拍摄成功后，页面提交 `capture_id` 和用户勾选的 `capture_views` 创建 run。图片始终保留在服务端，不经过浏览器下载再上传。默认选中 ERP、小行星、前后左右和下视图，上视图默认不选。
 
 ## 常见错误
 

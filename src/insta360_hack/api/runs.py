@@ -1,3 +1,4 @@
+import json
 import re
 import uuid
 
@@ -8,6 +9,7 @@ from insta360_hack.engine.context import make_context
 from insta360_hack.engine.runner import run_workflow
 from insta360_hack.engine.store import new_record
 from insta360_hack.engine.workflows import WORKFLOW_ID
+from insta360_hack.insta360.service import CAPTURE_FILES
 from insta360_hack.nodes.references import MAX_REFERENCE_IMAGES
 from insta360_hack.nodes.save_image import suffix_from_name
 from insta360_hack.nodes.validate import STYLES
@@ -35,6 +37,8 @@ async def create_run(
     prompt: str = Form(...),
     style: str | None = Form(None),
     image_url: str | None = Form(None),
+    capture_id: str | None = Form(None),
+    capture_views: str | None = Form(None),
     mode: str = Form("auto"),
     image: list[UploadFile] | None = File(None),
 ):
@@ -47,15 +51,44 @@ async def create_run(
     if style is not None and style not in STYLES:
         raise HTTPException(status_code=422, detail="style 不在允许列表")
     image_url = (image_url or "").strip() or None
+    capture_id = (capture_id or "").strip() or None
+    capture_views = (capture_views or "").strip() or None
     mode = (mode or "auto").strip()
     if mode not in {"auto", "confirm"}:
         raise HTTPException(status_code=422, detail="mode 只能是 auto 或 confirm")
     reference_images = await _read_images(image)
-    if bool(reference_images) == bool(image_url):
-        raise HTTPException(status_code=422, detail="参考图文件和 image_url 需要二选一")
+    sources = sum((bool(reference_images), bool(image_url), bool(capture_id)))
+    if sources != 1:
+        raise HTTPException(
+            status_code=422,
+            detail="参考图文件、image_url 和 capture_id 必须且只能提供一种",
+        )
+    views: list[str] = []
+    if capture_id:
+        views = _parse_capture_views(capture_views)
+        try:
+            reference_images = request.app.state.capture_store.reference_images(
+                capture_id, views
+            )
+        except KeyError:
+            raise HTTPException(status_code=404, detail="capture 不存在") from None
+        except RuntimeError:
+            raise HTTPException(status_code=409, detail="capture 尚未成功完成") from None
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=409, detail=f"capture 视角文件缺失: {exc.args[0]}"
+            ) from None
+    elif capture_views:
+        raise HTTPException(status_code=422, detail="capture_views 需要配合 capture_id")
 
     run_id = uuid.uuid4().hex
     record = new_record(run_id, prompt=prompt, style=style, image_url=image_url, mode=mode)
+    record["inputs"].update(
+        {
+            "capture_id": capture_id,
+            "capture_views": views or None,
+        }
+    )
     store = request.app.state.store
     store.create(record)
     ctx = make_context(
@@ -164,6 +197,48 @@ async def _read_images(images: list[UploadFile] | None) -> list[tuple[bytes, str
     if len(ready) > MAX_REFERENCE_IMAGES:
         raise HTTPException(status_code=422, detail=f"参考图最多 {MAX_REFERENCE_IMAGES} 张")
     return ready
+
+
+def _parse_capture_views(raw: str | None) -> list[str]:
+    if not raw:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "使用 capture_id 时必须提供 capture_views，"
+                '格式为 JSON 字符串数组，例如 ["front","right","back"]'
+            ),
+        )
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        raise HTTPException(
+            status_code=422, detail="capture_views 必须是 JSON 字符串数组"
+        ) from None
+    if not isinstance(parsed, list) or not all(
+        isinstance(item, str) for item in parsed
+    ):
+        raise HTTPException(
+            status_code=422, detail="capture_views 必须是 JSON 字符串数组"
+        )
+    views = [item.strip() for item in parsed]
+    if not views:
+        raise HTTPException(status_code=422, detail="capture_views 不能为空")
+    if any(not view for view in views):
+        raise HTTPException(status_code=422, detail="capture_views 不能包含空名称")
+    if len(views) > MAX_REFERENCE_IMAGES:
+        raise HTTPException(
+            status_code=422, detail=f"capture_views 最多 {MAX_REFERENCE_IMAGES} 个"
+        )
+    if len(set(views)) != len(views):
+        raise HTTPException(status_code=422, detail="capture_views 不能重复")
+    invalid = [view for view in views if view not in CAPTURE_FILES]
+    if invalid:
+        allowed = ",".join(CAPTURE_FILES)
+        raise HTTPException(
+            status_code=422,
+            detail=f"非法 capture_views: {','.join(invalid)}；允许值为 {allowed}",
+        )
+    return views
 
 
 async def _read_image(image: UploadFile | None) -> tuple[bytes, str] | None:

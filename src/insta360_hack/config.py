@@ -28,6 +28,16 @@ class Settings:
     data_dir: Path
     run_timeout_seconds: float
     poll_interval_seconds: float
+    insta360_base_url: str = "http://192.168.42.1"
+    insta360_request_timeout: float = 15.0
+    insta360_capture_timeout: float = 120.0
+    insta360_poll_interval: float = 1.0
+    ffmpeg_bin: str = "ffmpeg"
+    ffmpeg_timeout: float = 120.0
+    projection_view_size: int = 1600
+    projection_view_fov: int = 90
+    projection_planet_size: int = 1600
+    projection_planet_fov: int = 300
 
     @property
     def path_prefix(self) -> str:
@@ -58,4 +68,24 @@ def load_settings() -> Settings:
         data_dir=Path(os.environ.get("DATA_DIR", "data")),
         run_timeout_seconds=float(os.environ.get("RUN_TIMEOUT_SECONDS", "2400")),
         poll_interval_seconds=float(os.environ.get("POLL_INTERVAL_SECONDS", "12")),
+        insta360_base_url=os.environ.get(
+            "INSTA360_BASE_URL", "http://192.168.42.1"
+        ).rstrip("/"),
+        insta360_request_timeout=float(
+            os.environ.get("INSTA360_REQUEST_TIMEOUT", "15")
+        ),
+        insta360_capture_timeout=float(
+            os.environ.get("INSTA360_CAPTURE_TIMEOUT", "120")
+        ),
+        insta360_poll_interval=float(
+            os.environ.get("INSTA360_POLL_INTERVAL", "1")
+        ),
+        ffmpeg_bin=os.environ.get("FFMPEG_BIN", "ffmpeg").strip() or "ffmpeg",
+        ffmpeg_timeout=float(os.environ.get("FFMPEG_TIMEOUT", "120")),
+        projection_view_size=int(os.environ.get("INSTA360_VIEW_SIZE", "1600")),
+        projection_view_fov=int(os.environ.get("INSTA360_VIEW_FOV", "90")),
+        projection_planet_size=int(
+            os.environ.get("INSTA360_PLANET_SIZE", "1600")
+        ),
+        projection_planet_fov=int(os.environ.get("INSTA360_PLANET_FOV", "300")),
     )

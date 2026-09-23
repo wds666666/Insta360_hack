@@ -6,7 +6,7 @@ import { PromptForm } from "./components/PromptForm";
 import { StageList } from "./components/StageList";
 import { TaskList } from "./components/TaskList";
 import { formatDuration, meshSeconds, stepSeconds, useNow } from "./meshTime";
-import type { RunRecord, RunSummary } from "./types";
+import type { RunRecord, RunSource, RunSummary } from "./types";
 
 const RUN_KEY = "chujian-run-id";
 const RUN_STATUS: Record<string, string> = {
@@ -36,6 +36,14 @@ function writeRunUrl(runId: string | null) {
     sessionStorage.removeItem(RUN_KEY);
   }
   window.history.replaceState(null, "", url);
+}
+
+function releasePreviews(urls: string[]) {
+  for (const url of urls) {
+    if (url.startsWith("blob:")) {
+      URL.revokeObjectURL(url);
+    }
+  }
 }
 
 export function App() {
@@ -139,9 +147,7 @@ export function App() {
 
   useEffect(() => {
     return () => {
-      for (const url of preview) {
-        URL.revokeObjectURL(url);
-      }
+      releasePreviews(preview);
     };
   }, [preview]);
 
@@ -165,9 +171,7 @@ export function App() {
             selectedId={runId}
             error={listError}
             onSelect={(id) => {
-              for (const url of preview) {
-                URL.revokeObjectURL(url);
-              }
+              releasePreviews(preview);
               setPreview([]);
               setNotice(null);
               setRun(null);
@@ -175,9 +179,7 @@ export function App() {
               writeRunUrl(id);
             }}
             onCreate={() => {
-              for (const url of preview) {
-                URL.revokeObjectURL(url);
-              }
+              releasePreviews(preview);
               setPreview([]);
               setNotice(null);
               setRun(null);
@@ -189,17 +191,21 @@ export function App() {
             disabled={running || busy || submitting}
             onImages={(files) => {
               setPreview((current) => {
-                for (const url of current) {
-                  URL.revokeObjectURL(url);
-                }
+                releasePreviews(current);
                 return files.map((file) => URL.createObjectURL(file));
               });
             }}
-            onSubmit={(prompt, images, mode) => {
+            onCameraImages={(urls) => {
+              setPreview((current) => {
+                releasePreviews(current);
+                return urls;
+              });
+            }}
+            onSubmit={(prompt, source: RunSource, mode) => {
               setNotice(null);
               setRun(null);
               setSubmitting(true);
-              void createRun(prompt, images, mode)
+              void createRun(prompt, source, mode)
                 .then((created) => {
                   setRunId(created.run_id);
                   writeRunUrl(created.run_id);

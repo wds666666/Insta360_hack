@@ -10,10 +10,12 @@
 
 ```
 浏览器
-  multipart：参考图文件 + prompt
+  手动上传，或先请求 X5 拍摄并选择服务端候选图
         │
         ▼
 FastAPI
+  POST /api/v1/camera/captures       后台拍摄并导出 8 张候选图
+  GET  /api/v1/camera/captures/{id}  轮询拍摄状态和候选图
   POST /api/v1/runs          立即 202 + run_id
   GET  /api/v1/runs          列出 data/runs 里已有的任务，新的在前
   GET  /api/v1/runs/{id}     轮询状态；outputs 里已完成的图随时可读
@@ -32,6 +34,12 @@ validate → save_image → plan_cutaway → optimize_image → upload_image →
   model.glb
   model.stl
   run.json
+
+本地 data/captures/{capture_id}/
+  capture.json
+  panorama.jpg
+  little_planet.jpg
+  view_front.jpg ... view_down.jpg
 ```
 
 Lux3D 的 `img` 必须是它能访问的 URL。本地文件不能直接当 `img`。所以顺序是：先把用户参考图写到本地，Gemini 优化后再把优化图写到同一目录，再走 Asset 上传拿到 URL，然后创建图生 3D。生成结束后把网格 GLB 和 STL 下载到同一个 run 目录。前端只访问我们的文件接口，不拿厂商的临时 URL（约 2 小时过期）。优化图一写入 `data/runs/{id}/`，查询接口就能返回它，不必等 3D 完成。
@@ -58,6 +66,7 @@ Lux3D 的 `img` 必须是它能访问的 URL。本地文件不能直接当 `img`
 
 - 工作流 `img-to-3d`：一张参考图 + prompt → 本地保存参考图 → Gemini 优化图写入 `data/runs/{id}/optimized.*` → Asset 上传优化图 → 图生 3D `G1` → 轮询 → 把 `model.glb` / `model.stl` 下载到本地。
 - FastAPI：创建 run、列出已有 run、查询 run、读取 run 目录里的文件。查询在每一步完成后就能看到已落地的原图、优化图和模型。网格生成时写入本阶段开始时间和已用秒数。
+- X5：浏览器触发后端通过 OSC 完成机内拼接拍照，再用 FFmpeg `v360` 导出小行星和前后左右上下视图。拍摄结果先保存在 `data/captures`，用户勾选后才复制到 run 的参考图。
 - 前端「触见」：上传全景和空间说明，显示原图、优化图、步骤进度，并用 Three.js 预览 GLB。说明见 [frontend/README.md](../frontend/README.md)。
 - `run.json` 写在 run 目录里，进程重启后仍能查到已结束的任务。重启时若网格任务已经创建（有 `lux3d_task_id` 或导出任务），从对应轮询接着跑，不把这次网格丢掉。还没创建厂商任务的 `pending` / `running` 才标为失败 `INTERRUPTED`。
 
@@ -140,6 +149,8 @@ Base：`/api/v1`。CORS 来源读 `CORS_ORIGINS`。
 | `prompt` | 是 | 交给 DeepSeek 的第一级说明，原文发送，不传给 Lux3D |
 | `image` | 与 `image_url` 二选一 | 参考图，可重复上传，最多 8 张。同一间房的全景、行星图或其他视角。jpg / png / webp，每张最大 20MB |
 | `image_url` | 与 `image` 二选一 | 已是公网 URL，仍会先下载再优化 |
+| `capture_id` | 与 `image`、`image_url` 三选一 | 已成功完成的 X5 拍摄 ID |
+| `capture_views` | 使用 `capture_id` 时必填 | JSON 字符串数组，可选 `panorama`、`little_planet`、`front`、`right`、`back`、`left`、`up`、`down`，至少 1 项、最多 8 项 |
 | `style` | 否 | `photorealistic` `cartoon` `anime` `hand_painted` `cyberpunk` `fantasy` `glass`。有值时拼进交给 DeepSeek 的说明 |
 | `mode` | 否 | `auto` 一直做到网格。`confirm` 在剖面说明后停在 `awaiting_image`，出图后再停在 `awaiting_mesh` |
 
@@ -148,6 +159,22 @@ Base：`/api/v1`。CORS 来源读 `CORS_ORIGINS`。
 ```json
 { "run_id": "...", "workflow_id": "img-to-3d", "status": "pending" }
 ```
+
+### X5 拍摄
+
+`POST /api/v1/camera/captures` 返回 `202`：
+
+```json
+{ "capture_id": "...", "status": "pending" }
+```
+
+同一后端实例一次只允许一个 X5 拍摄；相机忙时返回 `409`，错误码为 `CAMERA_BUSY`。同步 OSC、图片下载和 FFmpeg 在工作线程中执行，不阻塞 FastAPI 事件循环。
+
+`GET /api/v1/camera/captures/{capture_id}` 返回 `pending | running | succeeded | failed`、当前 `step_label`、相机信息、错误和候选图片 URL。完成后候选键固定为 ERP 全景、小行星和六方向。页面默认选择除 `up` 外的 7 张，用户可以自行调整。
+
+`GET /api/v1/camera/captures/{capture_id}/files/{name}` 只允许 `panorama.jpg`、`little_planet.jpg` 和六个 `view_*.jpg`。服务重启时，未完成的拍摄会标记为 `INTERRUPTED`。
+
+相机热点可能没有互联网，因此推荐操作顺序是：连接 X5 Wi-Fi完成拍摄 → 候选图落盘 → 恢复互联网 → 勾选图片并创建 run。
 
 ### 列出已有任务
 
@@ -288,6 +315,16 @@ scripts/dev.sh       同时启动后端和前端
 | `DATA_DIR` | 默认 `data` |
 | `RUN_TIMEOUT_SECONDS` | 默认 `2400`。网格生成和 STL 导出共用这一上限 |
 | `POLL_INTERVAL_SECONDS` | 默认 `12` |
+| `INSTA360_BASE_URL` | OSC 地址，默认 `http://192.168.42.1` |
+| `INSTA360_REQUEST_TIMEOUT` | 单次 OSC 请求超时，默认 `15` 秒 |
+| `INSTA360_CAPTURE_TIMEOUT` | 拍照及机内拼接等待，默认 `120` 秒 |
+| `INSTA360_POLL_INTERVAL` | 拍照命令状态轮询间隔，默认 `1` 秒 |
+| `FFMPEG_BIN` | 带 `v360` 的 FFmpeg 命令，默认 `ffmpeg` |
+| `FFMPEG_TIMEOUT` | 每张投影图导出超时，默认 `120` 秒 |
+| `INSTA360_VIEW_SIZE` | 六方向图边长，默认 `1600` |
+| `INSTA360_VIEW_FOV` | 六方向图视场角，默认 `90` |
+| `INSTA360_PLANET_SIZE` | 小行星图边长，默认 `1600` |
+| `INSTA360_PLANET_FOV` | 小行星投影视场角，默认 `300` |
 
 密钥只放服务端 `.env`，不进仓库，不进前端。
 
@@ -299,4 +336,7 @@ scripts/dev.sh       同时启动后端和前端
 - [ ] Lux3D 的 `img` 是优化图的上传 URL，请求里没有 prompt。
 - [ ] 缺图返回 422，不调用 Gemini，也不调用 Lux3D。
 - [ ] 查询能看到当前节点、中文步骤名和 `lux3d_task_id`。
+- [ ] 网页触发 X5 后能看到 ERP、小行星和六方向候选图，默认不勾选上视图。
+- [ ] 创建 run 时只有用户勾选的 capture 视图进入 DeepSeek/Gemini。
+- [ ] 第二个并发拍摄返回 `409 CAMERA_BUSY`，不能向相机并发发命令。
 - [ ] 依赖里没有 agno、langgraph、langchain。

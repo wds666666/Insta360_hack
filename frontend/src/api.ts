@@ -1,4 +1,4 @@
-import type { RunMode, RunRecord, RunSummary } from "./types";
+import type { CaptureRecord, RunMode, RunRecord, RunSource, RunSummary } from "./types";
 
 export async function listRuns(): Promise<RunSummary[]> {
   const response = await fetch("/api/v1/runs", { cache: "no-store" });
@@ -9,15 +9,38 @@ export async function listRuns(): Promise<RunSummary[]> {
   return body.runs;
 }
 
-export async function createRun(prompt: string, images: File[], mode: RunMode): Promise<{ run_id: string }> {
+export async function createRun(prompt: string, source: RunSource, mode: RunMode): Promise<{ run_id: string }> {
   const body = new FormData();
   body.set("workflow_id", "img-to-3d");
   body.set("prompt", prompt);
-  for (const image of images) {
-    body.append("image", image);
+  if (source.kind === "upload") {
+    for (const image of source.images) {
+      body.append("image", image);
+    }
+  } else {
+    body.set("capture_id", source.captureId);
+    body.set("capture_views", JSON.stringify(source.selectedKeys));
   }
   body.set("mode", mode);
   const response = await fetch("/api/v1/runs", { method: "POST", body });
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  return response.json();
+}
+
+export async function createCapture(): Promise<{ capture_id: string; status: string }> {
+  const response = await fetch("/api/v1/camera/captures", { method: "POST" });
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  return response.json();
+}
+
+export async function getCapture(captureId: string): Promise<CaptureRecord> {
+  const response = await fetch(`/api/v1/camera/captures/${encodeURIComponent(captureId)}`, {
+    cache: "no-store",
+  });
   if (!response.ok) {
     throw new Error(await readError(response));
   }
@@ -55,6 +78,9 @@ async function readError(response: Response): Promise<string> {
     const body = await response.json();
     if (typeof body.detail === "string") {
       return body.detail;
+    }
+    if (body.detail && typeof body.detail.message === "string") {
+      return body.detail.message;
     }
   } catch {
     /* 响应不是 JSON */
