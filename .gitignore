@@ -13,3 +13,5 @@ ref/
 
 .env
 data/
+
+.DS_Store
