@@ -78,6 +78,7 @@ def _run_v360(
     )
     command = [
         ffmpeg_bin,
+        "-nostdin",
         "-hide_banner",
         "-loglevel",
         "error",
@@ -95,6 +96,7 @@ def _run_v360(
     try:
         completed = subprocess.run(
             command,
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             check=False,
