@@ -70,6 +70,7 @@ data/runs/{run_id}/
 | `LUX3D_REGION` | `cn`（默认）或 `global` |
 | `LUX3D_BASE_URL` | 可选，覆盖区域默认地址 |
 | `CORS_ORIGINS` | 逗号分隔，默认 `http://localhost` |
+| `ACCESS_PASSWORD` | 生成触觉地图前要输入的密码，默认 `insta360`。留空则不校验 |
 | `DATA_DIR` | 默认 `data` |
 | `RUN_TIMEOUT_SECONDS` | 网格生成和 STL 导出的超时，默认 `2400` |
 | `POLL_INTERVAL_SECONDS` | 轮询间隔，默认 `12` |

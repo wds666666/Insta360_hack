@@ -1,9 +1,14 @@
 import asyncio
+import hmac
+import re
 from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+
+_GATED = re.compile(r"^/api/v1/runs(?:/[^/]+/(?:image|mesh))?$")
 
 from insta360_hack.api.camera import router as camera_router
 from insta360_hack.api.runs import router as runs_router
@@ -66,6 +71,16 @@ def create_app(
             await http.aclose()
 
     app = FastAPI(title="insta360-hack", lifespan=lifespan)
+
+    @app.middleware("http")
+    async def require_access_password(request, call_next):
+        expected = settings.access_password
+        if expected and request.method == "POST" and _GATED.match(request.url.path):
+            given = request.headers.get("x-access-password", "")
+            if not hmac.compare_digest(given.encode(), expected.encode()):
+                return JSONResponse({"detail": "密码不对"}, status_code=401)
+        return await call_next(request)
+
     app.state.settings = settings
     app.state.store = store
     app.state.capture_store = capture_store

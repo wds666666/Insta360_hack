@@ -143,6 +143,37 @@ def test_parse_g1_outputs_keeps_slot_order():
     assert parsed == {"zip_url": "zip-url", "glb_url": "glb-url", "ply_url": "ply-url"}
 
 
+def test_wrong_password_does_not_start_run(tmp_path: Path):
+    from dataclasses import replace
+
+    settings = replace(_settings(tmp_path), access_password="insta360")
+    fake = FakeLux3D()
+    images = FakeImages()
+    app = create_app(
+        settings,
+        client=fake,
+        images=images,
+        store=RunStore(settings.data_dir / "runs"),
+    )
+    with TestClient(app) as client:
+        denied = client.post("/api/v1/runs", data={"workflow_id": "img-to-3d", "prompt": "一把椅子"})
+        wrong = client.post(
+            "/api/v1/runs",
+            data={"workflow_id": "img-to-3d", "prompt": "一把椅子"},
+            headers={"X-Access-Password": "nope"},
+        )
+        allowed = client.post(
+            "/api/v1/runs",
+            data={"workflow_id": "img-to-3d", "prompt": "一把椅子"},
+            headers={"X-Access-Password": "insta360"},
+        )
+    assert denied.status_code == 401
+    assert wrong.status_code == 401
+    assert allowed.status_code == 422
+    assert fake.created == []
+    assert images.calls == []
+
+
 def test_missing_image_does_not_call_lux3d(tmp_path: Path):
     fake = FakeLux3D()
     images = FakeImages()

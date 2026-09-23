@@ -9,6 +9,7 @@ import { formatDuration, meshSeconds, stepSeconds, useNow } from "./meshTime";
 import type { RunRecord, RunSource, RunSummary } from "./types";
 
 const RUN_KEY = "chujian-run-id";
+const ACCESS_KEY = "chujian-access-password";
 const RUN_STATUS: Record<string, string> = {
   pending: "等待开始",
   running: "正在生成",
@@ -24,6 +25,22 @@ function runFromUrl(): string | null {
 
 function rememberedRun(): string | null {
   return runFromUrl() || sessionStorage.getItem(RUN_KEY);
+}
+
+function savedPassword(): string {
+  return sessionStorage.getItem(ACCESS_KEY) || "";
+}
+
+function keepPassword(value: string) {
+  sessionStorage.setItem(ACCESS_KEY, value);
+}
+
+function dropPassword() {
+  sessionStorage.removeItem(ACCESS_KEY);
+}
+
+function wrongPassword(error: unknown): boolean {
+  return error instanceof Error && error.message === "密码不对";
 }
 
 function writeRunUrl(runId: string | null) {
@@ -56,6 +73,25 @@ export function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [pollEpoch, setPollEpoch] = useState(0);
+  const [passwordOpen, setPasswordOpen] = useState(false);
+  const passwordWait = useRef<((value: string | null) => void) | null>(null);
+
+  function requestPassword(): Promise<string | null> {
+    const saved = savedPassword();
+    if (saved) {
+      return Promise.resolve(saved);
+    }
+    return new Promise((resolve) => {
+      passwordWait.current = resolve;
+      setPasswordOpen(true);
+    });
+  }
+
+  function closePassword(value: string | null) {
+    setPasswordOpen(false);
+    passwordWait.current?.(value);
+    passwordWait.current = null;
+  }
 
   const running = run?.status === "pending" || run?.status === "running";
   const optimizeRunning = run?.nodes.some((node) => node.name === "optimize_image" && node.status === "running") ?? false;
@@ -203,20 +239,29 @@ export function App() {
             }}
             onSubmit={(prompt, source: RunSource, mode) => {
               setNotice(null);
-              setRun(null);
-              setSubmitting(true);
-              void createRun(prompt, source, mode)
-                .then((created) => {
-                  setRunId(created.run_id);
-                  writeRunUrl(created.run_id);
-                  void listRuns()
-                    .then(setTasks)
-                    .catch(() => undefined);
-                })
-                .catch((error: unknown) => {
-                  setSubmitting(false);
-                  setNotice(error instanceof Error ? error.message : "创建失败");
-                });
+              void requestPassword().then((password) => {
+                if (!password) {
+                  return;
+                }
+                setRun(null);
+                setSubmitting(true);
+                void createRun(prompt, source, mode, password)
+                  .then((created) => {
+                    keepPassword(password);
+                    setRunId(created.run_id);
+                    writeRunUrl(created.run_id);
+                    void listRuns()
+                      .then(setTasks)
+                      .catch(() => undefined);
+                  })
+                  .catch((error: unknown) => {
+                    if (wrongPassword(error)) {
+                      dropPassword();
+                    }
+                    setSubmitting(false);
+                    setNotice(error instanceof Error ? error.message : "创建失败");
+                  });
+              });
             }}
           />
           {notice ? (
@@ -263,9 +308,14 @@ export function App() {
                     return;
                   }
                   setNotice(null);
+                  void requestPassword().then((password) => {
+                    if (!password) {
+                      return;
+                    }
                   setSubmitting(true);
-                  void continueImage(runId, prompt)
+                  void continueImage(runId, prompt, password)
                     .then(() => {
+                      keepPassword(password);
                       setRun((current) =>
                         current
                           ? {
@@ -278,9 +328,13 @@ export function App() {
                       setPollEpoch((value) => value + 1);
                     })
                     .catch((error: unknown) => {
+                      if (wrongPassword(error)) {
+                        dropPassword();
+                      }
                       setSubmitting(false);
                       setNotice(error instanceof Error ? error.message : "没能开始生成空间结构");
                     });
+                  });
                 }}
               >
                 <div className="prompt-review-copy">
@@ -316,22 +370,58 @@ export function App() {
               run?.status === "awaiting_mesh" && runId
                 ? () => {
                     setNotice(null);
+                    void requestPassword().then((password) => {
+                      if (!password) {
+                        return;
+                      }
                     setSubmitting(true);
-                    void continueMesh(runId)
+                    void continueMesh(runId, password)
                       .then(() => {
+                        keepPassword(password);
                         setRun((current) => (current ? { ...current, status: "running" } : current));
                         setPollEpoch((value) => value + 1);
                       })
                       .catch((error: unknown) => {
+                        if (wrongPassword(error)) {
+                          dropPassword();
+                        }
                         setSubmitting(false);
                         setNotice(error instanceof Error ? error.message : "没能开始生成模型");
                       });
+                    });
                   }
                 : null
             }
           />
         </main>
       </div>
+      {passwordOpen ? (
+        <form
+          className="gate"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const password = String(new FormData(event.currentTarget).get("password") ?? "");
+            if (!password) {
+              return;
+            }
+            closePassword(password);
+          }}
+        >
+          <div className="gate-card" role="dialog" aria-modal="true" aria-labelledby="gate-title">
+            <h2 id="gate-title">输入密码</h2>
+            <p>生成会调用模型。输入密码后才能继续，避免公开页面被随便使用。</p>
+            <input name="password" type="password" autoFocus required placeholder="密码" />
+            <div className="gate-actions">
+              <button type="button" className="gate-cancel" onClick={() => closePassword(null)}>
+                取消
+              </button>
+              <button className="submit" type="submit">
+                继续生成
+              </button>
+            </div>
+          </div>
+        </form>
+      ) : null}
     </div>
   );
 }

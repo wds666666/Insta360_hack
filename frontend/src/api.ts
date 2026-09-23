@@ -9,7 +9,18 @@ export async function listRuns(): Promise<RunSummary[]> {
   return body.runs;
 }
 
-export async function createRun(prompt: string, source: RunSource, mode: RunMode): Promise<{ run_id: string }> {
+function accessHeaders(password: string, extra?: HeadersInit): Headers {
+  const headers = new Headers(extra);
+  headers.set("X-Access-Password", password);
+  return headers;
+}
+
+export async function createRun(
+  prompt: string,
+  source: RunSource,
+  mode: RunMode,
+  password: string,
+): Promise<{ run_id: string }> {
   const body = new FormData();
   body.set("workflow_id", "img-to-3d");
   body.set("prompt", prompt);
@@ -22,7 +33,7 @@ export async function createRun(prompt: string, source: RunSource, mode: RunMode
     body.set("capture_views", JSON.stringify(source.selectedKeys));
   }
   body.set("mode", mode);
-  const response = await fetch("/api/v1/runs", { method: "POST", body });
+  const response = await fetch("/api/v1/runs", { method: "POST", body, headers: accessHeaders(password) });
   if (!response.ok) {
     throw new Error(await readError(response));
   }
@@ -47,10 +58,10 @@ export async function getCapture(captureId: string): Promise<CaptureRecord> {
   return response.json();
 }
 
-export async function continueImage(runId: string, prompt: string): Promise<void> {
+export async function continueImage(runId: string, prompt: string, password: string): Promise<void> {
   const response = await fetch(`/api/v1/runs/${runId}/image`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: accessHeaders(password, { "Content-Type": "application/json" }),
     body: JSON.stringify({ prompt }),
   });
   if (!response.ok) {
@@ -58,8 +69,11 @@ export async function continueImage(runId: string, prompt: string): Promise<void
   }
 }
 
-export async function continueMesh(runId: string): Promise<void> {
-  const response = await fetch(`/api/v1/runs/${runId}/mesh`, { method: "POST" });
+export async function continueMesh(runId: string, password: string): Promise<void> {
+  const response = await fetch(`/api/v1/runs/${runId}/mesh`, {
+    method: "POST",
+    headers: accessHeaders(password),
+  });
   if (!response.ok) {
     throw new Error(await readError(response));
   }

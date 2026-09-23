@@ -312,6 +312,7 @@ scripts/dev.sh       同时启动后端和前端
 | `LUX3D_REGION` | `cn`（默认）或 `global` |
 | `LUX3D_BASE_URL` | 可选，覆盖区域默认 Host |
 | `CORS_ORIGINS` | 逗号分隔，默认 `http://localhost` |
+| `ACCESS_PASSWORD` | 生成前要输入的密码，默认 `insta360`。留空则不校验 |
 | `DATA_DIR` | 默认 `data` |
 | `RUN_TIMEOUT_SECONDS` | 默认 `2400`。网格生成和 STL 导出共用这一上限 |
 | `POLL_INTERVAL_SECONDS` | 默认 `12` |

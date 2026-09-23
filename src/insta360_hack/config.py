@@ -38,6 +38,7 @@ class Settings:
     projection_view_fov: int = 90
     projection_planet_size: int = 1600
     projection_planet_fov: int = 300
+    access_password: str = ""
 
     @property
     def path_prefix(self) -> str:
@@ -88,4 +89,5 @@ def load_settings() -> Settings:
             os.environ.get("INSTA360_PLANET_SIZE", "1600")
         ),
         projection_planet_fov=int(os.environ.get("INSTA360_PLANET_FOV", "300")),
+        access_password=os.environ.get("ACCESS_PASSWORD", "insta360"),
     )
