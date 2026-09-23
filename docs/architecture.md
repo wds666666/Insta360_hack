@@ -296,7 +296,7 @@ frontend/            触见页面，见 frontend/README.md
 scripts/dev.sh       同时启动后端和前端
 ```
 
-一起启动：`./scripts/dev.sh`。后端默认 `0.0.0.0:8000`，前端 `http://127.0.0.1:5173`。  
+一起启动：`./scripts/dev.sh`。后端默认 `0.0.0.0:8000`，前端 `http://127.0.0.1`。  
 开发自测：`uv run python -m insta360_hack.cli --prompt "..." --image ./ref.jpg`  
 只开后端：`uv run python main.py`。
 
@@ -311,7 +311,7 @@ scripts/dev.sh       同时启动后端和前端
 | `DEEPSEEK_BASE_URL` | 默认 `https://api.deepseek.com` |
 | `LUX3D_REGION` | `cn`（默认）或 `global` |
 | `LUX3D_BASE_URL` | 可选，覆盖区域默认 Host |
-| `CORS_ORIGINS` | 逗号分隔，默认 `http://localhost:5173` |
+| `CORS_ORIGINS` | 逗号分隔，默认 `http://localhost` |
 | `DATA_DIR` | 默认 `data` |
 | `RUN_TIMEOUT_SECONDS` | 默认 `2400`。网格生成和 STL 导出共用这一上限 |
 | `POLL_INTERVAL_SECONDS` | 默认 `12` |

@@ -53,7 +53,7 @@ def load_settings() -> Settings:
     base_url = os.environ.get("LUX3D_BASE_URL", default_host).rstrip("/")
     origins = [
         item.strip()
-        for item in os.environ.get("CORS_ORIGINS", "http://localhost:5173").split(",")
+        for item in os.environ.get("CORS_ORIGINS", "http://localhost").split(",")
         if item.strip()
     ]
     return Settings(

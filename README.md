@@ -19,7 +19,7 @@ uv sync
 ./scripts/dev.sh
 ```
 
-后端在 <http://127.0.0.1:8000>，页面在 <http://127.0.0.1:5173>。`Ctrl+C` 会同时停下两边。脚本启动前会先结束已经占用 `8000` 和 `5173` 的旧进程；后端如果没有起来，前端不会再启动。
+后端在 <http://127.0.0.1:8000>，页面在 <http://127.0.0.1>。`Ctrl+C` 会同时停下两边。脚本启动前会先结束已经占用 `8000` 和 `80` 的旧进程；后端如果没有起来，前端不会再启动。
 
 只开后端：`uv run python main.py`。只开前端时，后端要已经在 `8000`：`npm run dev --prefix frontend`。
 
@@ -69,7 +69,7 @@ data/runs/{run_id}/
 | `DEEPSEEK_MODEL` | 默认 `deepseek-flash`（V4.1-Flash） |
 | `LUX3D_REGION` | `cn`（默认）或 `global` |
 | `LUX3D_BASE_URL` | 可选，覆盖区域默认地址 |
-| `CORS_ORIGINS` | 逗号分隔，默认 `http://localhost:5173` |
+| `CORS_ORIGINS` | 逗号分隔，默认 `http://localhost` |
 | `DATA_DIR` | 默认 `data` |
 | `RUN_TIMEOUT_SECONDS` | 网格生成和 STL 导出的超时，默认 `2400` |
 | `POLL_INTERVAL_SECONDS` | 轮询间隔，默认 `12` |

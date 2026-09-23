@@ -4,6 +4,16 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
 
+if ! command -v npm >/dev/null 2>&1; then
+  export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+  if [[ -s "$NVM_DIR/nvm.sh" ]]; then
+    set +u
+    # shellcheck disable=SC1091
+    . "$NVM_DIR/nvm.sh"
+    set -u
+  fi
+fi
+
 if [[ ! -d frontend/node_modules ]]; then
   npm install --prefix frontend
 fi
@@ -52,7 +62,7 @@ free_port() {
 }
 
 free_port 8000
-free_port 5173
+free_port 80
 
 trap cleanup INT TERM
 trap cleanup EXIT
@@ -75,7 +85,7 @@ if [[ "$ready" -ne 1 ]]; then
 fi
 
 echo "后端 http://0.0.0.0:8000"
-echo "前端 http://0.0.0.0:5173"
+echo "前端 http://0.0.0.0:80"
 echo "按 Ctrl+C 会同时停下前端和后端。"
 
 npm run dev --prefix frontend &
