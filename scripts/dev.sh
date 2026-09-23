@@ -74,8 +74,8 @@ if [[ "$ready" -ne 1 ]]; then
   exit 1
 fi
 
-echo "后端 http://127.0.0.1:8000"
-echo "前端 http://127.0.0.1:5173"
+echo "后端 http://0.0.0.0:8000"
+echo "前端 http://0.0.0.0:5173"
 echo "按 Ctrl+C 会同时停下前端和后端。"
 
 npm run dev --prefix frontend &
